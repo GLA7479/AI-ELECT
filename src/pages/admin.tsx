@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Layout from "../../components/Layout";
-import { supabase } from "../../lib/supabase";
+import { getSupabaseClient } from "../../lib/supabase";
 
 type Source = {
   id: string;
@@ -22,8 +22,10 @@ export default function AdminPage() {
   const [url, setUrl] = useState("");
   const [publisher, setPublisher] = useState("gov.il");
   const [docType, setDocType] = useState("law");
+  const [envError, setEnvError] = useState<string | null>(null);
 
   async function refresh() {
+    const supabase = getSupabaseClient();
     const { data } = await supabase
       .from("sources")
       .select("id,title,url,publisher,doc_type,version,created_at")
@@ -33,7 +35,9 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    refresh();
+    refresh().catch((err: unknown) => {
+      setEnvError(err instanceof Error ? err.message : String(err));
+    });
   }, []);
 
   async function addSource() {
@@ -41,6 +45,7 @@ export default function AdminPage() {
     if (!t) return;
     setLoading(true);
     try {
+      const supabase = getSupabaseClient();
       const { error } = await supabase.from("sources").insert({
         title: t,
         url: url.trim() || null,
@@ -62,6 +67,12 @@ export default function AdminPage() {
   return (
     <Layout>
       <h1 className="h1">ניהול מאגר (Admin)</h1>
+
+      {envError ? (
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div className="small">שגיאת הגדרה: {envError}</div>
+        </div>
+      ) : null}
 
       <div className="card">
         <div className="h2">הוסף מקור</div>
