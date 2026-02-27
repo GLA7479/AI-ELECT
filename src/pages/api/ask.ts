@@ -48,11 +48,49 @@ function buildExpandedQueries(q: string): string[] {
   for (const s of synonymMap) {
     if (s.re.test(normalized)) {
       variants.add(`${normalized} ${s.add.join(" ")}`);
+      s.add.forEach((term) => variants.add(term));
     }
   }
 
+  // Add token-level fallbacks for natural Hebrew questions:
+  // "איך לסדר ריכוז מונים" -> "ריכוז", "מונים", "ריכוז מונים"
+  const cleaned = normalized
+    .replace(/[^\u0590-\u05FFA-Za-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const stopwords = new Set([
+    "איך",
+    "מה",
+    "מתי",
+    "למה",
+    "איפה",
+    "מי",
+    "עם",
+    "על",
+    "של",
+    "את",
+    "זה",
+    "זו",
+    "או",
+    "אם",
+    "כי",
+    "לפי",
+    "צריך",
+    "אפשר",
+    "רוצה",
+    "לסדר",
+  ]);
+  const tokens = cleaned
+    .split(" ")
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3 && !stopwords.has(t));
+  tokens.forEach((t) => variants.add(t));
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    variants.add(`${tokens[i]} ${tokens[i + 1]}`);
+  }
+
   // Keep small set to avoid latency spikes.
-  return Array.from(variants).slice(0, 4);
+  return Array.from(variants).slice(0, 8);
 }
 
 function dedupeHits(hits: Hit[]): Hit[] {

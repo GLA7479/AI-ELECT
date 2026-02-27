@@ -160,9 +160,6 @@ export default function HomePage() {
           <>
             <hr />
             <div className="h2">תשובה ({a.mode})</div>
-            <div className="small" style={{ marginBottom: 12 }}>
-              {a.text}
-            </div>
             {a.segments && a.segments.length > 0 ? (
               <div>
                 {a.segments.map((seg, idx) => (
