@@ -27,25 +27,27 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="container">
       <div className="nav">
-        <Link href="/" className="badge">
-          שאל את המומחה
-        </Link>
-        <Link href="/library" className="badge">
-          מאגר
-        </Link>
-        <Link href="/offline" className="badge">
-          אוף־ליין
-        </Link>
-        <Link href="/updates" className="badge">
-          עדכונים
-        </Link>
-        <Link href="/history" className="badge">
-          היסטוריה
-        </Link>
-        <Link href="/admin" className="badge">
-          ניהול מאגר
-        </Link>
-        <span className="badge">{online ? "מחובר" : "אוף־ליין"}</span>
+        <div className="navLinks">
+          <Link href="/" className="badge">
+            שאל את המומחה
+          </Link>
+          <Link href="/library" className="badge">
+            מאגר
+          </Link>
+          <Link href="/offline" className="badge">
+            אוף־ליין
+          </Link>
+          <Link href="/updates" className="badge">
+            עדכונים
+          </Link>
+          <Link href="/history" className="badge">
+            היסטוריה
+          </Link>
+          <Link href="/admin" className="badge">
+            ניהול מאגר
+          </Link>
+        </div>
+        <span className="badge navStatus">{online ? "מחובר" : "אוף־ליין"}</span>
       </div>
 
       {children}
