@@ -22,7 +22,141 @@ type AskResponse = {
   citations: Citation[];
   segments: AnswerSegment[];
   confidence: "high" | "medium" | "low";
+  followUpQuestion?: string;
 };
+
+type ScopeMode = "law_only" | "law_plus_utility" | "all";
+
+type AskHistoryItem = {
+  q: string;
+  createdAt?: string;
+};
+
+function shortSnippet(text: string, max = 260): string {
+  const t = cleanAnswerText(text || "");
+  if (t.length <= max) return t;
+  return `${t.slice(0, max).trim()}...`;
+}
+
+function buildFallbackConversationalAnswer(params: {
+  question: string;
+  scope: ScopeMode;
+  segments: AnswerSegment[];
+}): { answer: string; followUpQuestion?: string } {
+  const { question, scope, segments } = params;
+  if (!segments.length) {
+    return {
+      answer:
+        "לא מצאתי כרגע מקור חוקי מספיק מדויק לשאלה הזו. אפשר לנסח שאלה ממוקדת יותר לפי תקנה/סעיף או לפי סוג מתקן.",
+      followUpQuestion:
+        "כדי לדייק: מדובר במבנה מגורים, אתר רפואי, או מתקן תעשייתי?",
+    };
+  }
+
+  const scopeLabel =
+    scope === "law_only"
+      ? "חוק ותקנות בלבד"
+      : scope === "law_plus_utility"
+        ? "חוק/תקנות + הנחיות מעגל"
+        : "כל המקורות";
+
+  const points = segments.slice(0, 3).map((s) => {
+    const line = shortSnippet(s.text, 180);
+    return `- ${s.section}: ${line}`;
+  });
+
+  return {
+    answer:
+      `לפי המקורות שבדקתי (${scopeLabel}), זו התמונה לשאלה "${question}":\n\n` +
+      `${points.join("\n")}\n\n` +
+      "אם תרצה, אנסח לך עכשיו תשובה מעשית לפי תרחיש מדויק (סוג מבנה/מתח/סביבת התקנה).",
+    followUpQuestion:
+      "כדי לדייק לפעולה בשטח: מה סוג המתקן ומה המתח הרלוונטי?",
+  };
+}
+
+async function generateConversationalAnswer(params: {
+  question: string;
+  contextualQuestion: string;
+  scope: ScopeMode;
+  history: AskHistoryItem[];
+  segments: AnswerSegment[];
+}): Promise<{ answer: string; followUpQuestion?: string } | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const contextBlocks = params.segments
+    .slice(0, 4)
+    .map(
+      (s, i) =>
+        `מקור ${i + 1}\nכותרת: ${s.title}\nסעיף: ${s.section}\nטקסט: ${shortSnippet(s.text, 850)}`
+    )
+    .join("\n\n");
+
+  const historyText = params.history
+    .slice(-4)
+    .map((h, idx) => `${idx + 1}. ${h.q}`)
+    .join("\n");
+
+  const systemPrompt = [
+    "אתה עוזר מקצועי לחשמלאים בישראל.",
+    "ענה בעברית ברורה, אנושית, קצרה ומעשית.",
+    "הבסס אך ורק על המקורות שסופקו. אין להמציא תקנות או סעיפים.",
+    "אם חסר מידע עובדתי במקורות - אמור זאת מפורשות ובקש הבהרה ממוקדת.",
+    "סגנון: יועץ מקצועי, לא העתקה רובוטית.",
+    "מבנה תשובה:",
+    "1) כותרת קצרה: 'בשורה התחתונה'",
+    "2) 3-6 נקודות מעשיות",
+    "3) שורת 'מקורות עיקריים' עם 1-3 סעיפים/כותרות",
+    "4) אם צריך: 'שאלת הבהרה' אחת קצרה",
+  ].join("\n");
+
+  const userPrompt = [
+    `שאלה נוכחית: ${params.question}`,
+    `שאלה קונטקסטואלית לחיפוש: ${params.contextualQuestion}`,
+    `מצב מיקוד: ${params.scope}`,
+    historyText ? `היסטוריית שיחה אחרונה:\n${historyText}` : "",
+    `מקורות:\n${contextBlocks}`,
+    "תן תשובה מקצועית וקריאה. אל תצטט טקסט ארוך כמות שהוא.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 700,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const answer = data.choices?.[0]?.message?.content?.trim();
+    if (!answer) return null;
+
+    const followUpMatch = answer.match(/שאלת הבהרה[:：]\s*(.+)$/m);
+    return {
+      answer,
+      followUpQuestion: followUpMatch?.[1]?.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
 
 type Hit = {
   source_title: string;
@@ -146,6 +280,53 @@ function dedupeHits(hits: Hit[]): Hit[] {
   return out;
 }
 
+function tokenizeForScoring(text: string): string[] {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^\u0590-\u05ffA-Za-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+}
+
+function tokenOverlapScore(query: string, candidate: string): number {
+  const qTokens = tokenizeForScoring(query);
+  if (qTokens.length === 0) return 0;
+  const cSet = new Set(tokenizeForScoring(candidate));
+  let matched = 0;
+  for (const t of qTokens) {
+    if (cSet.has(t)) matched += 1;
+  }
+  return matched / qTokens.length;
+}
+
+function buildContextualQuestion(question: string, history: AskHistoryItem[]): string {
+  const qRaw = (question || "").trim();
+  const q = qRaw
+    .replace(/^\s*זה\s+לא\s+הכוונה[,:]?\s*/i, "")
+    .replace(/^\s*לא\s+הכוונה[,:]?\s*/i, "")
+    .replace(/^\s*הכוונה\s+הייתה[,:]?\s*/i, "")
+    .replace(/^\s*התכוונתי[,:]?\s*/i, "")
+    .trim() || qRaw;
+  const lastQ = history.length > 0 ? (history[history.length - 1]?.q || "").trim() : "";
+  if (!lastQ) return q;
+
+  const isCorrection =
+    /(לא\s+הכוונה|הכוונה\s+הייתה|התכוונתי|זה\s+לא)/.test(qRaw);
+  if (isCorrection) {
+    // User corrected intent; do not drag previous context blindly.
+    return q;
+  }
+
+  const isLikelyFollowUp =
+    q.length <= 35 ||
+    /^(ומה|ואם|ואיך|תסביר|תפרט|ועכשיו|לגבי|ומה לגבי)/.test(q) ||
+    /\b(יותר|פחות|אותו|זה|זו)\b/.test(q);
+
+  if (!isLikelyFollowUp) return q;
+  return `${lastQ} ${q}`.trim();
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<AskResponse | { error: string }>
@@ -154,11 +335,18 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { question } = req.body as { question?: string };
+  const { question, scope, history } = req.body as {
+    question?: string;
+    scope?: ScopeMode;
+    history?: AskHistoryItem[];
+  };
   const q = (question || "").trim();
   if (!q) {
     return res.status(400).json({ error: "Missing question" });
   }
+  const selectedScope: ScopeMode = scope || "law_only";
+  const safeHistory = Array.isArray(history) ? history.slice(-6) : [];
+  const contextualQuestion = buildContextualQuestion(q, safeHistory);
 
   // Read env (and log short debug so תוכל לראות בטרמינל מה נטען)
   const urlFromEnv = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -199,10 +387,10 @@ export default async function handler(
     "אל-קם": "El-Kam",
   };
 
-  let expandedQuery = q;
+  let expandedQuery = contextualQuestion;
   for (const [hebrew, english] of Object.entries(queryExpansions)) {
-    if (q.includes(hebrew)) {
-      expandedQuery = `${q} ${english}`;
+    if (contextualQuestion.includes(hebrew)) {
+      expandedQuery = `${contextualQuestion} ${english}`;
       break;
     }
   }
@@ -235,6 +423,8 @@ export default async function handler(
         "לא מצאתי במאגר המקוון קטעים רלוונטיים מספיק. נסה ניסוח אחר או נוסיף מקורות נוספים.",
       citations: [],
       segments: [],
+      followUpQuestion:
+        "כדי לדייק: על איזה סוג מתקן/סביבה אתה שואל (למשל אמבטיה, לוח, הארקה, אתר רפואי)?",
     });
   }
 
@@ -265,6 +455,7 @@ export default async function handler(
     /(המעגל|חברת החשמל|ריכוז מונים|מונים|מונה|חיבור לבניין|תכנון חיבור)/i.test(
       q
     );
+  const isMedicalIntent = /(רפואי|בית\s*חולים|מרפאה|קליניקה)/i.test(q);
 
   // Sort hits so that laws/regulations and official sources are first, suppliers last.
   const getPriorityForHit = (h: Hit): number => {
@@ -336,6 +527,22 @@ export default async function handler(
     if (nonCatalog.length > 0) rankedHits = nonCatalog;
   }
 
+  // Unless question is explicitly medical, suppress "אתרים רפואיים" sources.
+  if (!isMedicalIntent) {
+    const nonMedical = rankedHits.filter(
+      (h) => !/(רפואי|אתרי רפואיים|מרפאה|קליניקה)/i.test(h.source_title || "")
+    );
+    if (nonMedical.length > 0) rankedHits = nonMedical;
+  }
+
+  // Scope mode from UI
+  if (selectedScope === "law_only") {
+    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) === 0);
+    rankedHits = legalOnly;
+  } else if (selectedScope === "law_plus_utility") {
+    rankedHits = rankedHits.filter((h) => getPriorityForHit(h) <= 1);
+  }
+
   // If this is not a utility-specific question and we have legal hits,
   // force legal sources to dominate the final answer.
   if (!isUtilityIntent) {
@@ -377,6 +584,8 @@ export default async function handler(
           'לא מצאתי במאגר החוקי קטעים רלוונטיים מספיק לשאלה זו. נסה ניסוח ממוקד יותר (למשל: "מרחק מאמבטיה לפי תקנות") או עדכן מקורות חוק/תקנות נוספים.',
         citations: [],
         segments: [],
+        followUpQuestion:
+          "כדי למקד: באיזה הקשר מדובר — בית מגורים, אתר רפואי, או מתקן אחר?",
       });
     }
   }
@@ -386,6 +595,9 @@ export default async function handler(
     const qa = noiseScore(a.text || "");
     const qb = noiseScore(b.text || "");
     if (qa !== qb) return qa - qb;
+    const overlapA = tokenOverlapScore(contextualQuestion, a.text || "");
+    const overlapB = tokenOverlapScore(contextualQuestion, b.text || "");
+    if (overlapA !== overlapB) return overlapB - overlapA;
     return (b.rank || 0) - (a.rank || 0);
   });
 
@@ -419,7 +631,22 @@ export default async function handler(
     url: h.source_url || undefined,
   }));
 
-  const answer = `מצאתי ${rankedHits.length} קטעים רלוונטיים בנושא "${q}". מוצגים המקורות המהימנים ביותר קודם.`;
+  const llmResult = await generateConversationalAnswer({
+    question: q,
+    contextualQuestion,
+    scope: selectedScope,
+    history: safeHistory,
+    segments,
+  });
+
+  const fallback = buildFallbackConversationalAnswer({
+    question: q,
+    scope: selectedScope,
+    segments,
+  });
+
+  const answer = llmResult?.answer || fallback.answer;
+  const followUpQuestion = llmResult?.followUpQuestion || fallback.followUpQuestion;
 
   const citations = top.map((h) => ({
     title: h.source_title,
@@ -441,6 +668,7 @@ export default async function handler(
     answer,
     citations,
     segments,
+    followUpQuestion,
   });
 }
 
