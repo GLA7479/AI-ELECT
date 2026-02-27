@@ -114,6 +114,7 @@ export default async function handler(
       answer:
         "לא מצאתי במאגר המקוון קטעים רלוונטיים מספיק. נסה ניסוח אחר או נוסיף מקורות נוספים.",
       citations: [],
+      segments: [],
     });
   }
 
