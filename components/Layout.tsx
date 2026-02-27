@@ -1,29 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ReactNode, useEffect, useState } from "react";
-
-function useOnlineStatus() {
-  const [online, setOnline] = useState(true);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const update = () => setOnline(navigator.onLine);
-    update();
-    window.addEventListener("online", update);
-    window.addEventListener("offline", update);
-    return () => {
-      window.removeEventListener("online", update);
-      window.removeEventListener("offline", update);
-    };
-  }, []);
-
-  return online;
-}
+import { ReactNode } from "react";
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const online = useOnlineStatus();
-
   return (
     <div className="container">
       <div className="nav">
@@ -47,7 +27,6 @@ export default function Layout({ children }: { children: ReactNode }) {
             ניהול מאגר
           </Link>
         </div>
-        <span className="badge navStatus">{online ? "מחובר" : "אוף־ליין"}</span>
       </div>
 
       {children}
