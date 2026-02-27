@@ -42,6 +42,23 @@ type DomainIntent =
   | "medical"
   | "general";
 
+function sanitizeUserQuestion(input: string): string {
+  let q = normalizeHebrewText(input || "");
+  // Remove dangling quote/bracket tails like: מרחק מאמבטיה לפי תקנות")
+  q = q.replace(/["'`)\]}»”]+$/g, "").trim();
+  // Collapse repeated punctuation that hurts search parsing.
+  q = q.replace(/[!?.,;:]{2,}/g, (m) => m.slice(0, 1));
+  return q;
+}
+
+function stripHebrewPrefix(token: string): string {
+  const t = (token || "").trim();
+  if (t.length < 4) return t;
+  // Common Hebrew prefixes in natural questions: ו/ב/ל/כ/מ/ה/ש
+  const stripped = t.replace(/^[ובכלמהש](?=[\u0590-\u05ff]{3,})/, "");
+  return stripped.length >= 3 ? stripped : t;
+}
+
 function shortSnippet(text: string, max = 260): string {
   const t = cleanAnswerText(text || "");
   if (t.length <= max) return t;
@@ -185,6 +202,21 @@ type SourceMeta = {
   doc_type: string | null;
 };
 
+function isPrimaryLocalLawSource(source: {
+  title?: string | null;
+  publisher?: string | null;
+  url?: string | null;
+}): boolean {
+  const title = (source.title || "").toLowerCase();
+  const publisher = (source.publisher || "").toLowerCase();
+  const url = (source.url || "").toLowerCase();
+  return (
+    publisher.includes("official_local_pdf") ||
+    url.startsWith("file:חוק-החשמל-2017.pdf") ||
+    (title.includes("חוק החשמל") && title.includes("2017"))
+  );
+}
+
 const NOISE_PATTERNS = [
   /your browser does not support the video tag/gi,
   /skip to main content/gi,
@@ -223,7 +255,7 @@ function fingerprint(text: string): string {
 }
 
 function buildExpandedQueries(q: string): string[] {
-  const normalized = q.trim();
+  const normalized = sanitizeUserQuestion(q).trim();
   const variants = new Set<string>([normalized]);
   variants.add(`${normalized} לפי תקנות`);
   variants.add(`${normalized} חוק החשמל`);
@@ -287,9 +319,13 @@ function buildExpandedQueries(q: string): string[] {
     .split(" ")
     .map((t) => t.trim())
     .filter((t) => t.length >= 3 && !stopwords.has(t));
-  tokens.forEach((t) => variants.add(t));
+  tokens.forEach((t) => {
+    variants.add(t);
+    variants.add(stripHebrewPrefix(t));
+  });
   for (let i = 0; i < tokens.length - 1; i += 1) {
     variants.add(`${tokens[i]} ${tokens[i + 1]}`);
+    variants.add(`${stripHebrewPrefix(tokens[i])} ${stripHebrewPrefix(tokens[i + 1])}`);
   }
 
   // Keep small set to avoid latency spikes.
@@ -378,12 +414,19 @@ const SEARCH_STOPWORDS = new Set([
 ]);
 
 function extractSearchTokens(q: string): string[] {
-  return normalizeHebrewText(q || "")
+  const tokens = normalizeHebrewText(q || "")
     .toLowerCase()
     .replace(/[^\u0590-\u05ffA-Za-z0-9\s]/g, " ")
     .split(/\s+/)
     .map((t) => t.trim())
     .filter((t) => t.length >= 2 && !SEARCH_STOPWORDS.has(t));
+  const expanded = new Set<string>();
+  for (const t of tokens) {
+    expanded.add(t);
+    const stripped = stripHebrewPrefix(t);
+    expanded.add(stripped);
+  }
+  return Array.from(expanded).filter((t) => t.length >= 2);
 }
 
 async function fallbackLawChunkSearch(params: {
@@ -416,6 +459,7 @@ async function fallbackLawChunkSearch(params: {
 
   const qNorm = normalizeHebrewText(question).toLowerCase();
   const qTokens = extractSearchTokens(question);
+  const domain = detectDomainIntent(question);
   if (qTokens.length === 0 && !qNorm) return [];
 
   const scored: Hit[] = [];
@@ -441,7 +485,11 @@ async function fallbackLawChunkSearch(params: {
       if (source.title.toLowerCase().includes(t)) score += 0.2;
     }
 
-    if (score < 0.9) continue;
+    // Boost the local official law PDF so it is used first for legal Q&A.
+    if (isPrimaryLocalLawSource(source)) score += 1.4;
+
+    const minScore = domain === "bathroom" || domain === "grounding" ? 0.55 : 0.9;
+    if (score < minScore) continue;
     scored.push({
       source_title: source.title,
       source_url: source.url,
@@ -518,36 +566,25 @@ export default async function handler(
   if (!q) {
     return res.status(400).json({ error: "Missing question" });
   }
+  const normalizedQuestion = sanitizeUserQuestion(q);
   const selectedScope: ScopeMode = scope || "law_only";
   const safeHistory = Array.isArray(history) ? history.slice(-6) : [];
-  const contextualQuestion = buildContextualQuestion(q, safeHistory);
+  const contextualQuestion = buildContextualQuestion(normalizedQuestion, safeHistory);
   const domainIntent = detectDomainIntent(contextualQuestion);
 
-  // Read env (and log short debug so תוכל לראות בטרמינל מה נטען)
-  const urlFromEnv = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  // fallback: אם משום מה ה‑env לא נקרא, נשתמש ב‑URL הקבוע כדי שלא תחסם
-  const url =
-    urlFromEnv || "https://sareeozscowscaiyepkz.supabase.co";
-
-  // debug minimal (לא מדפיס את כל ה‑key)
-  // eslint-disable-next-line no-console
-  console.log("SUPABASE_URL:", urlFromEnv);
-  // eslint-disable-next-line no-console
-  console.log(
-    "SUPABASE_KEY_PREFIX:",
-    anon ? String(anon).slice(0, 20) : "MISSING"
-  );
-
-  // עדיין דורשים שיהיה KEY תקין מה‑env
-  if (!anon) {
+  if (!url) {
+    return res.status(500).json({ error: "Missing env: SUPABASE_URL" });
+  }
+  if (!service) {
     return res
       .status(500)
-      .json({ error: "Missing env: NEXT_PUBLIC_SUPABASE_ANON_KEY" });
+      .json({ error: "Missing env: SUPABASE_SERVICE_ROLE_KEY" });
   }
 
-  const supabase = createClient(url, anon, {
+  const supabase = createClient(url, service, {
     auth: { persistSession: false },
   });
 
@@ -699,10 +736,27 @@ export default async function handler(
   let rankedHits = [...hits].sort((a, b) => {
     const priorityA = getPriorityForHit(a);
     const priorityB = getPriorityForHit(b);
+    const sourceBoostA = isPrimaryLocalLawSource({
+      title: a.source_title,
+      publisher: sourcePublishers[a.source_title],
+      url: a.source_url,
+    })
+      ? 1
+      : 0;
+    const sourceBoostB = isPrimaryLocalLawSource({
+      title: b.source_title,
+      publisher: sourcePublishers[b.source_title],
+      url: b.source_url,
+    })
+      ? 1
+      : 0;
 
     // First sort by priority (lower is better), then by rank
     if (priorityA !== priorityB) {
       return priorityA - priorityB;
+    }
+    if (sourceBoostA !== sourceBoostB) {
+      return sourceBoostB - sourceBoostA;
     }
     return (b.rank || 0) - (a.rank || 0);
   });
@@ -871,7 +925,7 @@ export default async function handler(
       h.section && !/^chunk\s+\d+/i.test(h.section)
         ? h.section
         : "קטע רלוונטי",
-    text: cleanAnswerText(h.text || ""),
+    text: shortSnippet(cleanAnswerText(h.text || ""), 320),
     url: h.source_url || undefined,
   }));
 
