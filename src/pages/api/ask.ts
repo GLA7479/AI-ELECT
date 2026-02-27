@@ -32,6 +32,16 @@ type AskHistoryItem = {
   createdAt?: string;
 };
 
+type DomainIntent =
+  | "bathroom"
+  | "garden"
+  | "grounding"
+  | "rcd"
+  | "panels"
+  | "metering"
+  | "medical"
+  | "general";
+
 function shortSnippet(text: string, max = 260): string {
   const t = cleanAnswerText(text || "");
   if (t.length <= max) return t;
@@ -167,6 +177,14 @@ type Hit = {
   rank: number;
 };
 
+type SourceMeta = {
+  id: string;
+  title: string;
+  url: string | null;
+  publisher: string | null;
+  doc_type: string | null;
+};
+
 const NOISE_PATTERNS = [
   /your browser does not support the video tag/gi,
   /skip to main content/gi,
@@ -207,6 +225,9 @@ function fingerprint(text: string): string {
 function buildExpandedQueries(q: string): string[] {
   const normalized = q.trim();
   const variants = new Set<string>([normalized]);
+  variants.add(`${normalized} לפי תקנות`);
+  variants.add(`${normalized} חוק החשמל`);
+  variants.add(`${normalized} תקנות חשמל`);
 
   const synonymMap: Array<{ re: RegExp; add: string[] }> = [
     { re: /הארק(?:ה|ות)/i, add: ["הארקת יסוד", "מוליך הארקה", "השוואת פוטנציאלים", "PE"] },
@@ -216,7 +237,14 @@ function buildExpandedQueries(q: string): string[] {
     { re: /איפוס|tt|tn/i, add: ["TN", "TT", "שיטת איפוס"] },
     {
       re: /אמבטיה|מקלחת|חדר רחצה|רטוב/i,
-      add: ["אמבטיה", "מקלחת", "חדר רחצה", "הגנה מפני חישמול", "מרחקי בטיחות"],
+      add: [
+        "אמבטיה",
+        "מקלחת",
+        "חדר רחצה",
+        "הגנה מפני חישמול",
+        "מרחקי בטיחות",
+        "מרחק מאמבטיה לפי תקנות",
+      ],
     },
   ];
 
@@ -280,6 +308,153 @@ function dedupeHits(hits: Hit[]): Hit[] {
   return out;
 }
 
+function detectDomainIntent(question: string): DomainIntent {
+  const q = normalizeHebrewText(question || "").toLowerCase();
+  if (/(אמבטיה|מקלחת|חדר רחצה|רטוב)/.test(q)) return "bathroom";
+  if (/(ברז גינה|גינה|חצר|חוץ)/.test(q)) return "garden";
+  if (/(הארקה|מוליך הארקה|השוואת פוטנציאלים|pe)/.test(q)) return "grounding";
+  if (/(פחת|rcd|ממסר פחת)/.test(q)) return "rcd";
+  if (/(לוח|לוחות|מפסק ראשי|מאמ\"ת|מאמת)/.test(q)) return "panels";
+  if (/(מונה|מונים|ריכוז מונים|ארון מונים)/.test(q)) return "metering";
+  if (/(רפואי|מרפאה|קליניקה|בית חולים)/.test(q)) return "medical";
+  return "general";
+}
+
+function domainRelevanceScore(
+  domain: DomainIntent,
+  hit: { source_title: string; section: string | null; text: string }
+): number {
+  const title = normalizeHebrewText(hit.source_title || "").toLowerCase();
+  const section = normalizeHebrewText(hit.section || "").toLowerCase();
+  const text = normalizeHebrewText(hit.text || "").toLowerCase();
+  const hay = `${title} ${section} ${text}`;
+
+  const hasAny = (patterns: RegExp[]) => patterns.some((p) => p.test(hay));
+
+  switch (domain) {
+    case "bathroom":
+      return hasAny([/אמבטיה/, /מקלחת/, /חדר רחצה/, /רטוב/]) ? 1 : 0;
+    case "garden":
+      return hasAny([/ברז גינה/, /גינה/, /חצר/, /מתקן חוץ/, /חיצוני/]) ? 1 : 0;
+    case "grounding":
+      return hasAny([/הארקה/, /מוליך הארקה/, /השוואת פוטנציאלים/, /\bpe\b/]) ? 1 : 0;
+    case "rcd":
+      return hasAny([/פחת/, /\brcd\b/, /ממסר פחת/]) ? 1 : 0;
+    case "panels":
+      return hasAny([/לוח/, /מפסק ראשי/, /מאמ\"ת|מאמת/, /מפסקים/]) ? 1 : 0;
+    case "metering":
+      return hasAny([/מונה/, /מונים/, /ריכוז מונים/, /ארון מונים/]) ? 1 : 0;
+    case "medical":
+      return hasAny([/רפואי/, /מרפאה/, /קליניקה/, /בית חולים/]) ? 1 : 0;
+    default:
+      return 0.5;
+  }
+}
+
+const SEARCH_STOPWORDS = new Set([
+  "איך",
+  "מה",
+  "מתי",
+  "למה",
+  "איפה",
+  "מי",
+  "עם",
+  "על",
+  "של",
+  "את",
+  "זה",
+  "זו",
+  "או",
+  "אם",
+  "כי",
+  "לפי",
+  "צריך",
+  "אפשר",
+  "רוצה",
+  "לסדר",
+  "האם",
+  "יש",
+  "ל",
+]);
+
+function extractSearchTokens(q: string): string[] {
+  return normalizeHebrewText(q || "")
+    .toLowerCase()
+    .replace(/[^\u0590-\u05ffA-Za-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2 && !SEARCH_STOPWORDS.has(t));
+}
+
+async function fallbackLawChunkSearch(params: {
+  supabase: any;
+  question: string;
+  limit?: number;
+}): Promise<Hit[]> {
+  const { supabase, question } = params;
+  const limit = params.limit || 20;
+
+  // 1) get legal sources only
+  const { data: sourcesData, error: srcErr } = await supabase
+    .from("sources")
+    .select("id,title,url,publisher,doc_type")
+    .or("doc_type.like.law_%,doc_type.like.regulation_%,doc_type.like.safety_%")
+    .limit(200);
+  if (srcErr || !sourcesData || sourcesData.length === 0) return [];
+
+  const legalSources = sourcesData as SourceMeta[];
+  const sourceById = new Map(legalSources.map((s) => [s.id, s]));
+  const sourceIds = legalSources.map((s) => s.id);
+
+  // 2) read chunks from legal sources
+  const { data: chunksData, error: chunksErr } = await supabase
+    .from("chunks")
+    .select("source_id,section,locator,text")
+    .in("source_id", sourceIds)
+    .limit(6000);
+  if (chunksErr || !chunksData || chunksData.length === 0) return [];
+
+  const qNorm = normalizeHebrewText(question).toLowerCase();
+  const qTokens = extractSearchTokens(question);
+  if (qTokens.length === 0 && !qNorm) return [];
+
+  const scored: Hit[] = [];
+  for (const row of chunksData as Array<{
+    source_id: string;
+    section: string | null;
+    locator: any;
+    text: string;
+  }>) {
+    const source = sourceById.get(row.source_id);
+    if (!source) continue;
+
+    const text = normalizeHebrewText(row.text || "");
+    const hay = text.toLowerCase();
+    const section = (row.section || "").toLowerCase();
+
+    let score = 0;
+    if (qNorm && hay.includes(qNorm)) score += 2.2;
+
+    for (const t of qTokens) {
+      if (hay.includes(t)) score += 0.55;
+      if (section.includes(t)) score += 0.35;
+      if (source.title.toLowerCase().includes(t)) score += 0.2;
+    }
+
+    if (score < 0.9) continue;
+    scored.push({
+      source_title: source.title,
+      source_url: source.url,
+      section: row.section,
+      locator: row.locator,
+      text,
+      rank: score,
+    });
+  }
+
+  return dedupeHits(scored.sort((a, b) => b.rank - a.rank).slice(0, limit));
+}
+
 function tokenizeForScoring(text: string): string[] {
   return (text || "")
     .toLowerCase()
@@ -319,7 +494,6 @@ function buildContextualQuestion(question: string, history: AskHistoryItem[]): s
   }
 
   const isLikelyFollowUp =
-    q.length <= 35 ||
     /^(ומה|ואם|ואיך|תסביר|תפרט|ועכשיו|לגבי|ומה לגבי)/.test(q) ||
     /\b(יותר|פחות|אותו|זה|זו)\b/.test(q);
 
@@ -347,6 +521,7 @@ export default async function handler(
   const selectedScope: ScopeMode = scope || "law_only";
   const safeHistory = Array.isArray(history) ? history.slice(-6) : [];
   const contextualQuestion = buildContextualQuestion(q, safeHistory);
+  const domainIntent = detectDomainIntent(contextualQuestion);
 
   // Read env (and log short debug so תוכל לראות בטרמינל מה נטען)
   const urlFromEnv = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -413,7 +588,17 @@ export default async function handler(
     collectedHits.push(...((data || []) as Hit[]));
   }
 
-  const hits = dedupeHits(collectedHits);
+  let hits = dedupeHits(collectedHits);
+
+  // Fallback: if RPC misses simple questions, scan legal chunks directly.
+  if (!hits || hits.length === 0) {
+    const fallbackHits = await fallbackLawChunkSearch({
+      supabase,
+      question: contextualQuestion,
+      limit: 20,
+    });
+    hits = fallbackHits;
+  }
 
   if (!hits || hits.length === 0) {
     return res.status(200).json({
@@ -456,6 +641,7 @@ export default async function handler(
       q
     );
   const isMedicalIntent = /(רפואי|בית\s*חולים|מרפאה|קליניקה)/i.test(q);
+  const isBathroomIntent = /(אמבטיה|מקלחת|חדר רחצה|רטוב)/i.test(q);
 
   // Sort hits so that laws/regulations and official sources are first, suppliers last.
   const getPriorityForHit = (h: Hit): number => {
@@ -527,12 +713,20 @@ export default async function handler(
     if (nonCatalog.length > 0) rankedHits = nonCatalog;
   }
 
+  // Domain intent focus: keep hits relevant to detected domain when possible.
+  if (domainIntent !== "general") {
+    const domainHits = rankedHits
+      .map((h) => ({ h, s: domainRelevanceScore(domainIntent, h) }))
+      .filter((x) => x.s >= 1)
+      .map((x) => x.h);
+    if (domainHits.length > 0) rankedHits = domainHits;
+  }
+
   // Unless question is explicitly medical, suppress "אתרים רפואיים" sources.
   if (!isMedicalIntent) {
-    const nonMedical = rankedHits.filter(
+    rankedHits = rankedHits.filter(
       (h) => !/(רפואי|אתרי רפואיים|מרפאה|קליניקה)/i.test(h.source_title || "")
     );
-    if (nonMedical.length > 0) rankedHits = nonMedical;
   }
 
   // Scope mode from UI
@@ -543,11 +737,58 @@ export default async function handler(
     rankedHits = rankedHits.filter((h) => getPriorityForHit(h) <= 1);
   }
 
+  // If strict scope filtering removed everything, run legal fallback again.
+  if (rankedHits.length === 0 && (selectedScope === "law_only" || !isUtilityIntent)) {
+    const fallbackHits = await fallbackLawChunkSearch({
+      supabase,
+      question: contextualQuestion,
+      limit: 25,
+    });
+    let nextHits = fallbackHits;
+    if (!isMedicalIntent) {
+      nextHits = nextHits.filter(
+        (h) => !/(רפואי|אתרי רפואיים|מרפאה|קליניקה)/i.test(h.source_title || "")
+      );
+    }
+    if (nextHits.length > 0) rankedHits = nextHits;
+  }
+
   // If this is not a utility-specific question and we have legal hits,
   // force legal sources to dominate the final answer.
   if (!isUtilityIntent) {
     const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) === 0);
     if (legalOnly.length > 0) rankedHits = legalOnly;
+  }
+
+  // One more safety net for simple legal questions.
+  if (rankedHits.length === 0 && !isUtilityIntent) {
+    const fallbackHits = await fallbackLawChunkSearch({
+      supabase,
+      question: q,
+      limit: 25,
+    });
+    let nextHits = fallbackHits;
+    if (!isMedicalIntent) {
+      nextHits = nextHits.filter(
+        (h) => !/(רפואי|אתרי רפואיים|מרפאה|קליניקה)/i.test(h.source_title || "")
+      );
+    }
+    if (nextHits.length > 0) rankedHits = nextHits;
+  }
+
+  // If still nothing relevant for bathroom context, return focused clarification
+  // instead of unrelated legal text.
+  if (rankedHits.length === 0 && isBathroomIntent && !isMedicalIntent) {
+    return res.status(200).json({
+      mode: "online",
+      confidence: "low",
+      answer:
+        "לא מצאתי כרגע במאגר החוקי קטע ברור מספיק על 'אמבטיה' בהקשר שביקשת. כדי לא להטעות, אני צריך מיקוד קצר לפני שאחזיר הנחיה מעשית.",
+      citations: [],
+      segments: [],
+      followUpQuestion:
+        "בחר הקשר: בית מגורים / אתר רפואי / מתקן אחר, ומה בדיוק נדרש: מרחק, סוג שקע, או דרישת הגנה.",
+    });
   }
 
   // Filter out only extremely broken extraction chunks.
@@ -598,6 +839,9 @@ export default async function handler(
     const overlapA = tokenOverlapScore(contextualQuestion, a.text || "");
     const overlapB = tokenOverlapScore(contextualQuestion, b.text || "");
     if (overlapA !== overlapB) return overlapB - overlapA;
+    const domainA = domainRelevanceScore(domainIntent, a);
+    const domainB = domainRelevanceScore(domainIntent, b);
+    if (domainA !== domainB) return domainB - domainA;
     return (b.rank || 0) - (a.rank || 0);
   });
 
