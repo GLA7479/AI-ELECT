@@ -1,0 +1,896 @@
+[
+  {
+    "title": "המעגל – digital_orders_system",
+    "url": "https://iec-hamaagal.co.il/digital_orders_system",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – cottage",
+    "url": "https://iec-hamaagal.co.il/cottage",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – stock_systems_menu",
+    "url": "https://iec-hamaagal.co.il/stock_systems_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_doors_two",
+    "url": "https://iec-hamaagal.co.il/niche_doors_two",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – hatkanat_monim_menu",
+    "url": "https://iec-hamaagal.co.il/hatkanat_monim_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – tama",
+    "url": "https://iec-hamaagal.co.il/tama",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – main_menu",
+    "url": "https://iec-hamaagal.co.il/main_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – connection_size",
+    "url": "https://iec-hamaagal.co.il/connection_size",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – counter_cabinet_type",
+    "url": "https://iec-hamaagal.co.il/counter_cabinet_type",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – counter_cabinet_location",
+    "url": "https://iec-hamaagal.co.il/counter_cabinet_location",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – the_front",
+    "url": "https://iec-hamaagal.co.il/the_front",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – the_bottom",
+    "url": "https://iec-hamaagal.co.il/the_bottom",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche",
+    "url": "https://iec-hamaagal.co.il/niche",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – connection_to_the_electrical_board",
+    "url": "https://iec-hamaagal.co.il/connection_to_the_electrical_board",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – order_connection",
+    "url": "https://iec-hamaagal.co.il/order_connection",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – general_instructions",
+    "url": "https://iec-hamaagal.co.il/general_instructions",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – corner_structure",
+    "url": "https://iec-hamaagal.co.il/corner_structure",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – detached_house_on_the_lot",
+    "url": "https://iec-hamaagal.co.il/detached_house_on_the_lot",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – two_family_adjoining_units",
+    "url": "https://iec-hamaagal.co.il/two_family_adjoining_units",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – two_family_building_separated_by_a_parking",
+    "url": "https://iec-hamaagal.co.il/two_family_building_separated_by_a_parking",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – three_family_building",
+    "url": "https://iec-hamaagal.co.il/three_family_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_for_one_and_two_counters",
+    "url": "https://iec-hamaagal.co.il/niche_for_one_and_two_counters",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_in_concrete_casting",
+    "url": "https://iec-hamaagal.co.il/niche_in_concrete_casting",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_door",
+    "url": "https://iec-hamaagal.co.il/niche_door",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – stock_systems",
+    "url": "https://iec-hamaagal.co.il/stock_systems",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – types_of_cabinets",
+    "url": "https://iec-hamaagal.co.il/types_of_cabinets",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – base_of_cabinet",
+    "url": "https://iec-hamaagal.co.il/base_of_cabinet",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – cabinet_location_infrastructure",
+    "url": "https://iec-hamaagal.co.il/cabinet_location_infrastructure",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – reset_ground_connection",
+    "url": "https://iec-hamaagal.co.il/reset_ground_connection",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – reset_ground_connection_closet_electrical",
+    "url": "https://iec-hamaagal.co.il/reset_ground_connection_closet_electrical",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – reset_ground_connection_cabinet_niche",
+    "url": "https://iec-hamaagal.co.il/reset_ground_connection_cabinet_niche",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – closet_electrical_room_location",
+    "url": "https://iec-hamaagal.co.il/closet_electrical_room_location",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_closet_niche_location",
+    "url": "https://iec-hamaagal.co.il/niche_closet_niche_location",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – rikuz_monim",
+    "url": "https://iec-hamaagal.co.il/rikuz_monim",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – how_to_connect_to_the_building",
+    "url": "https://iec-hamaagal.co.il/how_to_connect_to_the_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – the_infrastructure_for_connecting_to_the_building",
+    "url": "https://iec-hamaagal.co.il/the_infrastructure_for_connecting_to_the_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – the_niche_location_and_dimensions",
+    "url": "https://iec-hamaagal.co.il/the_niche_location_and_dimensions",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – arranging_the_closets",
+    "url": "https://iec-hamaagal.co.il/arranging_the_closets",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – the_public_counter",
+    "url": "https://iec-hamaagal.co.il/the_public_counter",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – closets_connections",
+    "url": "https://iec-hamaagal.co.il/closets_connections",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – installing_the_closet_and_base",
+    "url": "https://iec-hamaagal.co.il/installing_the_closet_and_base",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_doors",
+    "url": "https://iec-hamaagal.co.il/niche_doors",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – installing_counters_on_floors",
+    "url": "https://iec-hamaagal.co.il/installing_counters_on_floors",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – connection_to_building",
+    "url": "https://iec-hamaagal.co.il/connection_to_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – ground_floor",
+    "url": "https://iec-hamaagal.co.il/ground_floor",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – cable_shaft_1",
+    "url": "https://iec-hamaagal.co.il/cable_shaft_1",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – floors_counter_niche_1",
+    "url": "https://iec-hamaagal.co.il/floors_counter_niche_1",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – main_security_cabinet_width",
+    "url": "https://iec-hamaagal.co.il/main_security_cabinet_width",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – public_counter_1",
+    "url": "https://iec-hamaagal.co.il/public_counter_1",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – niche_1",
+    "url": "https://iec-hamaagal.co.il/niche_1",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – requirements",
+    "url": "https://iec-hamaagal.co.il/requirements",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – orders",
+    "url": "https://iec-hamaagal.co.il/orders",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – multiple_buildings",
+    "url": "https://iec-hamaagal.co.il/multiple_buildings",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – convert_connection",
+    "url": "https://iec-hamaagal.co.il/convert_connection",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – temporary_connection_for_construction",
+    "url": "https://iec-hamaagal.co.il/temporary_connection_for_construction",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – temporary_connection_to_the_crane",
+    "url": "https://iec-hamaagal.co.il/temporary_connection_to_the_crane",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – without_a_common_lobby",
+    "url": "https://iec-hamaagal.co.il/without_a_common_lobby",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – one_lobby",
+    "url": "https://iec-hamaagal.co.il/one_lobby",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – temporary_location",
+    "url": "https://iec-hamaagal.co.il/temporary_location",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – final_location",
+    "url": "https://iec-hamaagal.co.il/final_location",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – bdikot_mitkan",
+    "url": "https://iec-hamaagal.co.il/bdikot_mitkan",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – docs",
+    "url": "https://iec-hamaagal.co.il/docs",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – high_voltage",
+    "url": "https://iec-hamaagal.co.il/high_voltage",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – docs_low_voltage",
+    "url": "https://iec-hamaagal.co.il/docs_low_voltage",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – before_first_start",
+    "url": "https://iec-hamaagal.co.il/before_first_start",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – connected_to_a_high_voltage",
+    "url": "https://iec-hamaagal.co.il/connected_to_a_high_voltage",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – connected_to_a_low_voltage",
+    "url": "https://iec-hamaagal.co.il/connected_to_a_low_voltage",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – inspection_due_to_change",
+    "url": "https://iec-hamaagal.co.il/inspection_due_to_change",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – copy_counter_or_replace_power_line_without_changing_connection_size",
+    "url": "https://iec-hamaagal.co.il/copy_counter_or_replace_power_line_without_changing_connection_size",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – replacing_or_copying_main_board",
+    "url": "https://iec-hamaagal.co.il/replacing_or_copying_main_board",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – inspection_due_to_replacement_of_main_circuit_breaker",
+    "url": "https://iec-hamaagal.co.il/inspection_due_to_replacement_of_main_circuit_breaker",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – inspection_due_to_in_the_electrical_connection",
+    "url": "https://iec-hamaagal.co.il/inspection_due_to_in_the_electrical_connection",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – electrical_high_rise_building",
+    "url": "https://iec-hamaagal.co.il/electrical_high_rise_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – medical_sites",
+    "url": "https://iec-hamaagal.co.il/medical_sites",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – construction_sites",
+    "url": "https://iec-hamaagal.co.il/construction_sites",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pools",
+    "url": "https://iec-hamaagal.co.il/pools",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – generators",
+    "url": "https://iec-hamaagal.co.il/generators",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – outdoor_lighting_facilities",
+    "url": "https://iec-hamaagal.co.il/outdoor_lighting_facilities",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – elevators",
+    "url": "https://iec-hamaagal.co.il/elevators",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – underfloor_heating",
+    "url": "https://iec-hamaagal.co.il/underfloor_heating",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – solar_water_heaters",
+    "url": "https://iec-hamaagal.co.il/solar_water_heaters",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – traffic_lights",
+    "url": "https://iec-hamaagal.co.il/traffic_lights",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – electric_vehicle_charging",
+    "url": "https://iec-hamaagal.co.il/electric_vehicle_charging",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – distributed_production_facilities",
+    "url": "https://iec-hamaagal.co.il/distributed_production_facilities",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – distributed_production_facilities_2",
+    "url": "https://iec-hamaagal.co.il/distributed_production_facilities_2",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – gas_production_facility",
+    "url": "https://iec-hamaagal.co.il/gas_production_facility",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – photovoltaic_installation_2",
+    "url": "https://iec-hamaagal.co.il/photovoltaic_installation_2",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – menu_electric_car",
+    "url": "https://iec-hamaagal.co.il/menu_electric_car",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – Operating_mode_1",
+    "url": "https://iec-hamaagal.co.il/Operating_mode_1",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – Operating_mode_2",
+    "url": "https://iec-hamaagal.co.il/Operating_mode_2",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – Operating_mode_3",
+    "url": "https://iec-hamaagal.co.il/Operating_mode_3",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – Operating_mode_4",
+    "url": "https://iec-hamaagal.co.il/Operating_mode_4",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – adjacent_structure",
+    "url": "https://iec-hamaagal.co.il/adjacent_structure",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – condominiums",
+    "url": "https://iec-hamaagal.co.il/condominiums",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – public_place",
+    "url": "https://iec-hamaagal.co.il/public_place",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – work_process",
+    "url": "https://iec-hamaagal.co.il/work_process",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – ordering",
+    "url": "https://iec-hamaagal.co.il/ordering",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – technical_coordination",
+    "url": "https://iec-hamaagal.co.il/technical_coordination",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – detailed_planning",
+    "url": "https://iec-hamaagal.co.il/detailed_planning",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – construction_of_the_station",
+    "url": "https://iec-hamaagal.co.il/construction_of_the_station",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – the_construction_process_delivery",
+    "url": "https://iec-hamaagal.co.il/the_construction_process_delivery",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – construction",
+    "url": "https://iec-hamaagal.co.il/construction",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – when",
+    "url": "https://iec-hamaagal.co.il/when",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – who",
+    "url": "https://iec-hamaagal.co.il/who",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – location",
+    "url": "https://iec-hamaagal.co.il/location",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – delivery",
+    "url": "https://iec-hamaagal.co.il/delivery",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – location_of_the_station",
+    "url": "https://iec-hamaagal.co.il/location_of_the_station",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – inside_a_building",
+    "url": "https://iec-hamaagal.co.il/inside_a_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – adjacent_to_the_building",
+    "url": "https://iec-hamaagal.co.il/adjacent_to_the_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – distance_from_a_building",
+    "url": "https://iec-hamaagal.co.il/distance_from_a_building",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – doorways",
+    "url": "https://iec-hamaagal.co.il/doorways",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – entrance",
+    "url": "https://iec-hamaagal.co.il/entrance",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – ventilation",
+    "url": "https://iec-hamaagal.co.il/ventilation",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – stairs",
+    "url": "https://iec-hamaagal.co.il/stairs",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – entrance_and_surroundings",
+    "url": "https://iec-hamaagal.co.il/entrance_and_surroundings",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – entrance_surface",
+    "url": "https://iec-hamaagal.co.il/entrance_surface",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – load_resistance",
+    "url": "https://iec-hamaagal.co.il/load_resistance",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – around",
+    "url": "https://iec-hamaagal.co.il/around",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – control",
+    "url": "https://iec-hamaagal.co.il/control",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – division_of_responsibilities",
+    "url": "https://iec-hamaagal.co.il/division_of_responsibilities",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – construction_stages",
+    "url": "https://iec-hamaagal.co.il/construction_stages",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – construction_stages_two",
+    "url": "https://iec-hamaagal.co.il/construction_stages_two",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – delivery_to_the_iec",
+    "url": "https://iec-hamaagal.co.il/delivery_to_the_iec",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – meeting_the_conditions",
+    "url": "https://iec-hamaagal.co.il/meeting_the_conditions",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – certificates",
+    "url": "https://iec-hamaagal.co.il/certificates",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – acceptance_testing",
+    "url": "https://iec-hamaagal.co.il/acceptance_testing",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – defects",
+    "url": "https://iec-hamaagal.co.il/defects",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – #component-200481",
+    "url": "https://iec-hamaagal.co.il/#component-200481",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – consumption_optimization",
+    "url": "https://iec-hamaagal.co.il/consumption_optimization",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – salute_plugins_another_phase",
+    "url": "https://iec-hamaagal.co.il/salute_plugins_another_phase",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – decisions_menu_interpretation_committee",
+    "url": "https://iec-hamaagal.co.il/decisions_menu_interpretation_committee",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – electrician_information_menu",
+    "url": "https://iec-hamaagal.co.il/electrician_information_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – distributed_production_facilities_menu",
+    "url": "https://iec-hamaagal.co.il/distributed_production_facilities_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – commercial_guidelines_for_connections_to_houses_Menu",
+    "url": "https://iec-hamaagal.co.il/commercial_guidelines_for_connections_to_houses_Menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – #component-133324",
+    "url": "https://iec-hamaagal.co.il/#component-133324",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – #component-129694",
+    "url": "https://iec-hamaagal.co.il/#component-129694",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – planning_a_connection_to_buildings",
+    "url": "https://iec-hamaagal.co.il/planning_a_connection_to_buildings",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – transformation",
+    "url": "https://iec-hamaagal.co.il/transformation",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – network_rates_menu",
+    "url": "https://iec-hamaagal.co.il/network_rates_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – yetzur_menu",
+    "url": "https://iec-hamaagal.co.il/yetzur_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – information_library_menu",
+    "url": "https://iec-hamaagal.co.il/information_library_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – server_farm",
+    "url": "https://iec-hamaagal.co.il/server_farm",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pdf_magnet",
+    "url": "https://iec-hamaagal.co.il/pdf_magnet",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pdf_taarifei",
+    "url": "https://iec-hamaagal.co.il/pdf_taarifei",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pdf_transformation_17",
+    "url": "https://iec-hamaagal.co.il/pdf_transformation_17",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – grounding_and_pap",
+    "url": "https://iec-hamaagal.co.il/grounding_and_pap",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pdf_yetzur_5",
+    "url": "https://iec-hamaagal.co.il/pdf_yetzur_5",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pdf_yetzur_6",
+    "url": "https://iec-hamaagal.co.il/pdf_yetzur_6",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  },
+  {
+    "title": "המעגל – pdf_bdikot_31",
+    "url": "https://iec-hamaagal.co.il/pdf_bdikot_31",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  }
+]

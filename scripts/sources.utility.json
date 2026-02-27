@@ -1,0 +1,20 @@
+[
+  {
+    "title": "המעגל – ספריית מידע מקצועי (תפריט)",
+    "url": "https://iec-hamaagal.co.il/information_library_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_index"
+  },
+  {
+    "title": "המעגל – תפריט ראשי",
+    "url": "https://iec-hamaagal.co.il/main_menu",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_index"
+  },
+  {
+    "title": "המעגל – בדיקות מתקן (דוגמה)",
+    "url": "https://iec-hamaagal.co.il/connected_to_a_high_voltage_part_two",
+    "publisher": "iec-hamaagal",
+    "doc_type": "utility_guideline"
+  }
+]
