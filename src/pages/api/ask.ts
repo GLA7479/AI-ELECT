@@ -24,6 +24,49 @@ type AskResponse = {
   confidence: "high" | "medium" | "low";
 };
 
+type Hit = {
+  source_title: string;
+  source_url: string | null;
+  section: string | null;
+  locator: any;
+  text: string;
+  rank: number;
+};
+
+function buildExpandedQueries(q: string): string[] {
+  const normalized = q.trim();
+  const variants = new Set<string>([normalized]);
+
+  const synonymMap: Array<{ re: RegExp; add: string[] }> = [
+    { re: /הארק(?:ה|ות)/i, add: ["הארקת יסוד", "מוליך הארקה", "השוואת פוטנציאלים", "PE"] },
+    { re: /פחת/i, add: ["מפסק פחת", "RCD", "ממסר פחת"] },
+    { re: /ריכוז מונים|מונים|מונה/i, add: ["ארון מונים", "ריכוז מונים", "לוח מונים"] },
+    { re: /לוח|לוחות/i, add: ["לוח חשמל", "לוח ראשי", "מפסק ראשי"] },
+    { re: /איפוס|tt|tn/i, add: ["TN", "TT", "שיטת איפוס"] },
+  ];
+
+  for (const s of synonymMap) {
+    if (s.re.test(normalized)) {
+      variants.add(`${normalized} ${s.add.join(" ")}`);
+    }
+  }
+
+  // Keep small set to avoid latency spikes.
+  return Array.from(variants).slice(0, 4);
+}
+
+function dedupeHits(hits: Hit[]): Hit[] {
+  const seen = new Set<string>();
+  const out: Hit[] = [];
+  for (const h of hits) {
+    const key = `${h.source_title}||${h.section || ""}||${(h.text || "").slice(0, 180)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(h);
+  }
+  return out;
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<AskResponse | { error: string }>
@@ -85,27 +128,25 @@ export default async function handler(
     }
   }
 
-  const { data, error } = await supabase.rpc("search_chunks", {
-    q: expandedQuery,
-    k: 20,
-  });
+  const queryVariants = buildExpandedQueries(expandedQuery);
+  const collectedHits: Hit[] = [];
 
-  if (error) {
-    return res
-      .status(500)
-      .json({ error: `search_chunks failed: ${error.message}` });
+  for (const qv of queryVariants) {
+    const { data, error } = await supabase.rpc("search_chunks", {
+      q: qv,
+      k: 20,
+    });
+
+    if (error) {
+      return res
+        .status(500)
+        .json({ error: `search_chunks failed: ${error.message}` });
+    }
+
+    collectedHits.push(...((data || []) as Hit[]));
   }
 
-  type Hit = {
-    source_title: string;
-    source_url: string | null;
-    section: string | null;
-    locator: any;
-    text: string;
-    rank: number;
-  };
-
-  const hits = (data || []) as Hit[];
+  const hits = dedupeHits(collectedHits);
 
   if (!hits || hits.length === 0) {
     return res.status(200).json({
@@ -252,7 +293,11 @@ export default async function handler(
   }));
 
   const confidence =
-    hits[0].rank >= 1.2 ? "high" : hits[0].rank >= 0.7 ? "medium" : "low";
+    rankedHits[0].rank >= 1.2
+      ? "high"
+      : rankedHits[0].rank >= 0.7
+        ? "medium"
+        : "low";
 
   return res.status(200).json({
     mode: "online",
