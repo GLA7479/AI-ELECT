@@ -46,13 +46,14 @@ export default function AdminPage() {
     setLoading(true);
     try {
       const supabase = getSupabaseClient();
-      const { error } = await supabase.from("sources").insert({
+      const row = {
         title: t,
         url: url.trim() || null,
         publisher: publisher.trim() || null,
         doc_type: docType.trim() || null,
         version: "v1",
-      });
+      } as any;
+      const { error } = await supabase.from("sources").insert(row);
       if (error) throw error;
       setTitle("");
       setUrl("");
