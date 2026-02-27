@@ -80,6 +80,10 @@ function buildExpandedQueries(q: string): string[] {
     { re: /ריכוז מונים|מונים|מונה/i, add: ["ארון מונים", "ריכוז מונים", "לוח מונים"] },
     { re: /לוח|לוחות/i, add: ["לוח חשמל", "לוח ראשי", "מפסק ראשי"] },
     { re: /איפוס|tt|tn/i, add: ["TN", "TT", "שיטת איפוס"] },
+    {
+      re: /אמבטיה|מקלחת|חדר רחצה|רטוב/i,
+      add: ["אמבטיה", "מקלחת", "חדר רחצה", "הגנה מפני חישמול", "מרחקי בטיחות"],
+    },
   ];
 
   for (const s of synonymMap) {
@@ -339,7 +343,7 @@ export default async function handler(
     if (legalOnly.length > 0) rankedHits = legalOnly;
   }
 
-  // Filter out broken PDF extraction chunks (control chars / unreadable garbage).
+  // Filter out only extremely broken extraction chunks.
   const isReadableHit = (raw: string): boolean => {
     const text = raw || "";
     if (!text.trim()) return false;
@@ -350,15 +354,32 @@ export default async function handler(
     const length = Math.max(text.length, 1);
     const noiseRatio = (controlChars + replacementChars) / length;
 
-    // Reject if clearly noisy.
-    if (controlChars >= 3) return false;
-    if (noiseRatio > 0.01) return false;
+    // Keep OCR-heavy legal text unless it is severely corrupted.
+    if (controlChars >= 60) return false;
+    if (noiseRatio > 0.08) return false;
 
     return true;
   };
 
   const readableHits = rankedHits.filter((h) => isReadableHit(h.text || ""));
   if (readableHits.length > 0) rankedHits = readableHits;
+
+  // Hard rule: if question is not utility-specific, never answer from utility-only hits.
+  if (!isUtilityIntent) {
+    const legalHits = rankedHits.filter((h) => getPriorityForHit(h) === 0);
+    if (legalHits.length > 0) {
+      rankedHits = legalHits;
+    } else {
+      return res.status(200).json({
+        mode: "online",
+        confidence: "low",
+        answer:
+          'לא מצאתי במאגר החוקי קטעים רלוונטיים מספיק לשאלה זו. נסה ניסוח ממוקד יותר (למשל: "מרחק מאמבטיה לפי תקנות") או עדכן מקורות חוק/תקנות נוספים.',
+        citations: [],
+        segments: [],
+      });
+    }
+  }
 
   // Prefer cleaner and more diverse hits (avoid multiple near-identical menu pages).
   const sortedByQuality = [...rankedHits].sort((a, b) => {
