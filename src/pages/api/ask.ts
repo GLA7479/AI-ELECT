@@ -33,6 +33,43 @@ type Hit = {
   rank: number;
 };
 
+const NOISE_PATTERNS = [
+  /your browser does not support the video tag/gi,
+  /skip to main content/gi,
+  /תפריט ראשי/g,
+  /<<\s*הקודם\s*הבא\s*>>/g,
+  /לא קיים סרטון/g,
+  /מסמכי עבודה/g,
+  /הדפסה/g,
+];
+
+function cleanAnswerText(text: string): string {
+  let out = normalizeHebrewText(text || "");
+  for (const p of NOISE_PATTERNS) out = out.replace(p, " ");
+  out = out.replace(/\s{2,}/g, " ").trim();
+  return out;
+}
+
+function noiseScore(text: string): number {
+  const t = (text || "").toLowerCase();
+  let score = 0;
+  if (t.includes("your browser does not support the video tag")) score += 3;
+  if (t.includes("skip to main content")) score += 2;
+  if (t.includes("תפריט ראשי")) score += 2;
+  if (t.includes("לא קיים סרטון")) score += 1;
+  if (t.includes("<< הקודם הבא >>")) score += 1;
+  return score;
+}
+
+function fingerprint(text: string): string {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^\u0590-\u05ffA-Za-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
 function buildExpandedQueries(q: string): string[] {
   const normalized = q.trim();
   const variants = new Set<string>([normalized]);
@@ -97,7 +134,7 @@ function dedupeHits(hits: Hit[]): Hit[] {
   const seen = new Set<string>();
   const out: Hit[] = [];
   for (const h of hits) {
-    const key = `${h.source_title}||${h.section || ""}||${(h.text || "").slice(0, 180)}`;
+    const key = `${h.source_title}||${h.section || ""}||${fingerprint(h.text || "")}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(h);
@@ -220,6 +257,10 @@ export default async function handler(
     /(קטלוג|מק\"?ט|דגם|מחיר|שניידר|schneider|ארכה|erco|אסקו|aresco|wise|אל-?קם|el-?kam)/i.test(
       q
     );
+  const isUtilityIntent =
+    /(המעגל|חברת החשמל|ריכוז מונים|מונים|מונה|חיבור לבניין|תכנון חיבור)/i.test(
+      q
+    );
 
   // Sort hits so that laws/regulations and official sources are first, suppliers last.
   const getPriorityForHit = (h: Hit): number => {
@@ -291,6 +332,13 @@ export default async function handler(
     if (nonCatalog.length > 0) rankedHits = nonCatalog;
   }
 
+  // If this is not a utility-specific question and we have legal hits,
+  // force legal sources to dominate the final answer.
+  if (!isUtilityIntent) {
+    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) === 0);
+    if (legalOnly.length > 0) rankedHits = legalOnly;
+  }
+
   // Filter out broken PDF extraction chunks (control chars / unreadable garbage).
   const isReadableHit = (raw: string): boolean => {
     const text = raw || "";
@@ -312,12 +360,41 @@ export default async function handler(
   const readableHits = rankedHits.filter((h) => isReadableHit(h.text || ""));
   if (readableHits.length > 0) rankedHits = readableHits;
 
-  const top = rankedHits.slice(0, 4);
+  // Prefer cleaner and more diverse hits (avoid multiple near-identical menu pages).
+  const sortedByQuality = [...rankedHits].sort((a, b) => {
+    const qa = noiseScore(a.text || "");
+    const qb = noiseScore(b.text || "");
+    if (qa !== qb) return qa - qb;
+    return (b.rank || 0) - (a.rank || 0);
+  });
+
+  const diverseTop: Hit[] = [];
+  const seenFingerprints = new Set<string>();
+  const seenTitles = new Set<string>();
+
+  for (const h of sortedByQuality) {
+    if (diverseTop.length >= 4) break;
+    const fp = fingerprint(cleanAnswerText(h.text || ""));
+    if (!fp || fp.length < 20) continue;
+    if (seenFingerprints.has(fp)) continue;
+
+    // Allow at most 1 result per exact source title in top set.
+    if (seenTitles.has(h.source_title)) continue;
+
+    seenFingerprints.add(fp);
+    seenTitles.add(h.source_title);
+    diverseTop.push(h);
+  }
+
+  const top = diverseTop.length > 0 ? diverseTop : rankedHits.slice(0, 4);
 
   const segments: AnswerSegment[] = top.map((h) => ({
     title: h.source_title,
-    section: h.section || "ללא סעיף",
-    text: normalizeHebrewText(h.text || ""),
+    section:
+      h.section && !/^chunk\s+\d+/i.test(h.section)
+        ? h.section
+        : "קטע רלוונטי",
+    text: cleanAnswerText(h.text || ""),
     url: h.source_url || undefined,
   }));
 

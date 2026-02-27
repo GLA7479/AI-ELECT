@@ -93,6 +93,49 @@ function isPdfUrl(url) {
   return url.toLowerCase().includes(".pdf");
 }
 
+function isFileUrl(url) {
+  return typeof url === "string" && url.startsWith("file:");
+}
+
+function localPathFromFileUrl(fileUrl) {
+  const raw = fileUrl.replace(/^file:/, "").trim();
+  // Support both absolute and relative paths
+  return path.isAbsolute(raw) ? raw : path.join(process.cwd(), raw);
+}
+
+async function extractTextFromLocalFile(fileUrl) {
+  const absPath = localPathFromFileUrl(fileUrl);
+  if (!fs.existsSync(absPath)) {
+    throw new Error(`Local file not found: ${absPath}`);
+  }
+
+  const ext = path.extname(absPath).toLowerCase();
+  const buf = fs.readFileSync(absPath);
+
+  if (ext === ".pdf") {
+    const data = await pdfParse(buf);
+    return { text: normalizeText(data.text || ""), used: "local-pdf", fileUrl };
+  }
+
+  if (ext === ".docx" || ext === ".doc") {
+    try {
+      const result = await mammoth.extractRawText({ buffer: buf });
+      return {
+        text: normalizeText(result.value || ""),
+        used: "local-docx",
+        fileUrl,
+      };
+    } catch (err) {
+      // fallback for old .doc
+      const text = await extractTextFromOldDocViaLibreOffice(fileUrl, buf);
+      return { text, used: "local-doc", fileUrl };
+    }
+  }
+
+  // default plain text-ish fallback
+  return { text: normalizeText(buf.toString("utf8")), used: "local-text", fileUrl };
+}
+
 async function fetchWithMeta(url) {
   const res = await fetch(url, {
     redirect: "follow",
@@ -371,6 +414,12 @@ async function extractTextFromOldDocViaLibreOffice(url, docBuffer) {
 }
 
 async function getBestTextFromUrl(url) {
+  // Local file mode (file:relative/path.pdf)
+  if (isFileUrl(url)) {
+    const local = await extractTextFromLocalFile(url);
+    return { text: local.text, used: local.used, pdfUrl: local.fileUrl };
+  }
+
   // 1) Try normal fetch
   const res = await fetchWithMeta(url);
 
