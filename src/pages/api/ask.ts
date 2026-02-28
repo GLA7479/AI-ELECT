@@ -90,6 +90,24 @@ function applyPendingAnswer(state: ChatState, userText: string): boolean {
     }
   }
 
+  if (state.pendingSlot === "protection") {
+    const parsed = parseProtection(t);
+    if (parsed) {
+      state.slots.protection = parsed;
+      state.pendingSlot = undefined;
+      return true;
+    }
+  }
+
+  if (state.pendingSlot === "voltage") {
+    const parsed = parseVoltage(t);
+    if (parsed) {
+      state.slots.voltage = parsed;
+      state.pendingSlot = undefined;
+      return true;
+    }
+  }
+
   // Always try to capture ohms value if present
   const ohm = parseOhms(t);
   if (ohm != null) {
@@ -151,6 +169,260 @@ function nextEarthingQuestion(state: ChatState): Answer | null {
   }
 
   state.pendingSlot = undefined;
+  return null;
+}
+
+function parseProtection(text: string): string | null {
+  const t = normalizeHebrewText(text || "").toLowerCase();
+  // Match patterns like "C16", "B20", "D10", "נתיך 16", "מאמ\"ת C16"
+  const m = t.match(/([bcd])\s*(\d+)|נתיך\s*(\d+)|מאמ"?ת\s*([bcd])\s*(\d+)/i);
+  if (m) {
+    if (m[3]) return `נתיך ${m[3]}`;
+    if (m[1] && m[2]) return `${m[1].toUpperCase()}${m[2]}`;
+    if (m[4] && m[5]) return `${m[4].toUpperCase()}${m[5]}`;
+  }
+  return null;
+}
+
+function parseVoltage(text: string): 230 | 400 | null {
+  const t = normalizeHebrewText(text || "").toLowerCase();
+  if (/230|220|חד\s*פאזי|single/i.test(t)) return 230;
+  if (/400|380|תלת\s*פאזי|three|3\s*phase/i.test(t)) return 400;
+  return null;
+}
+
+function nextLoopFaultQuestion(state: ChatState): Answer | null {
+  const { slots } = state;
+
+  // Missing system
+  if (!slots.system || slots.system === "UNKNOWN") {
+    state.pendingSlot = "system";
+    return {
+      kind: "flow",
+      title: "לולאת תקלה (Zs)",
+      bottomLine: "כדי לחשב/לבדוק Zs צריך לדעת שיטת איפוס.",
+      steps: [],
+      requiredInfo: ["שיטת איפוס: TT / TN"],
+      followUpQuestion: "זה TT או TN?",
+      cautions: [],
+      sources: [],
+      confidence: "low",
+    };
+  }
+
+  // Missing protection
+  if (!slots.protection) {
+    state.pendingSlot = "protection";
+    return {
+      kind: "flow",
+      title: "לולאת תקלה (Zs)",
+      bottomLine: "כדי לחשב Zs מקסימלי צריך לדעת סוג ההגנה והזרם הנקוב.",
+      steps: [],
+      requiredInfo: ['סוג הגנה: מאמ"ת B/C/D או נתיך'],
+      followUpQuestion: 'איזה מאמ"ת? (B/C/D והזרם, למשל C16) או נתיך (למשל נתיך 16)',
+      cautions: [],
+      sources: [],
+      confidence: "low",
+    };
+  }
+
+  // Missing voltage
+  if (!slots.voltage) {
+    state.pendingSlot = "voltage";
+    return {
+      kind: "flow",
+      title: "לולאת תקלה (Zs)",
+      bottomLine: "כדי לחשב Zs מקסימלי צריך לדעת מתח רשת.",
+      steps: [],
+      requiredInfo: ["מתח רשת: 230V או 400V"],
+      followUpQuestion: "230V או 400V?",
+      cautions: [],
+      sources: [],
+      confidence: "low",
+    };
+  }
+
+  state.pendingSlot = undefined;
+  return null;
+}
+
+// ===== COMMAND HANDLER FOR SHORT WORDS =====
+
+type ShortCommand = "calc" | "source" | "explain" | "continue" | "ok" | null;
+
+function detectShortCommand(question: string): ShortCommand {
+  const shortCmd = normalizeHebrewText(question || "").trim();
+  if (shortCmd.length > 15) return null;
+
+  const isCalcCmd = /^(חישוב|תחשב|תחשבי|calculate|calc)$/i.test(shortCmd);
+  const isSourceCmd = /^(מקור|ציטוט|סעיף|source|cite)$/i.test(shortCmd);
+  const isExplainCmd = /^(הסבר|תסביר|explain)$/i.test(shortCmd);
+  const isOkCmd = /^(אוקיי|סבבה|ok|יאללה|continue|תמשיך|אז|אז\?)$/i.test(shortCmd);
+
+  if (isCalcCmd) return "calc";
+  if (isSourceCmd) return "source";
+  if (isExplainCmd) return "explain";
+  if (isOkCmd) return "continue";
+  return null;
+}
+
+function handleShortCommand(
+  cmd: ShortCommand,
+  state: ChatState,
+  question: string
+): Answer | null {
+  if (!cmd || !state.topic) return null;
+
+  if (state.topic === "loop_fault") {
+    if (cmd === "calc") {
+      // Start slot filling for Zs calculation
+      const nextQ = nextLoopFaultQuestion(state);
+      if (nextQ) {
+        return {
+          ...nextQ,
+          bottomLine: "מעולה, נחשב Zs מקסימלי. " + nextQ.bottomLine,
+        };
+      }
+      // All slots filled - can proceed to calculation
+      return {
+        kind: "flow",
+        title: "חישוב Zs מקסימלי",
+        bottomLine: `לפי הנתונים: ${state.slots.system}, ${state.slots.protection}, ${state.slots.voltage}V.`,
+        steps: [
+          "Zs מקסימלי מחושב לפי: Zs = Uo / Ia",
+          `כאשר Uo = ${state.slots.voltage}V (מתח פאזה-אדמה)`,
+          `ו-Ia הוא זרם הניתוק של ההגנה לפי סוג (B/C/D) וזרם נקוב`,
+          "יש לבדוק מול טבלאות תקן או מפרטי יצרן את Ia המדויק",
+        ],
+        requiredInfo: ["יש לבדוק את Ia המדויק מהטבלאות/מפרטי יצרן"],
+        followUpQuestion: "רוצה מקור מהתקנות?",
+        cautions: ["חישוב זה הוא אומדן. יש לבדוק מול תקן/יצרן לפני עבודה."],
+        sources: [],
+        confidence: "medium",
+      };
+    }
+    if (cmd === "source") {
+      return {
+        kind: "rag",
+        title: "מקור — לולאת תקלה",
+        bottomLine: "מחפש מקורות בתקנות על Zs (לולאת תקלה)...",
+        steps: [],
+        requiredInfo: ["מחפש מקורות רלוונטיים..."],
+        followUpQuestion: "רוצה חישוב או רק מקור?",
+        cautions: [],
+        sources: [],
+        confidence: "low",
+      };
+    }
+    if (cmd === "explain") {
+      return {
+        kind: "flow",
+        title: "הסבר — לולאת תקלה",
+        bottomLine:
+          "Zs (לולאת תקלה) היא האימפדנס של מסלול התקלה (פאזה→תקלה→PE/PEN/אדמה→מקור), שמשפיע על זרם התקלה וזמן הניתוק של ההגנה.",
+        steps: [
+          "אם המטרה היא תקין/לא תקין: משווים לדרישת זמן ניתוק של ההגנה לפי סוג הרשת (TN/TT).",
+          "ב-TT עם RCD, לרוב בודקים גם RA×IΔn מול מתח מגע מותר.",
+          "כדי לחשב Zs מקסימלי צריך: סוג הגנה (B/C/D/נתיך), זרם נקוב, מתח וזמן ניתוק יעד.",
+        ],
+        requiredInfo: [],
+        followUpQuestion: "רוצה חישוב או מקור מהתקנות?",
+        cautions: [],
+        sources: [],
+        confidence: "high",
+      };
+    }
+    if (cmd === "continue") {
+      const nextQ = nextLoopFaultQuestion(state);
+      if (nextQ) return nextQ;
+      return {
+        kind: "flow",
+        title: "לולאת תקלה",
+        bottomLine: "מה תרצה לעשות? חישוב, מקור, או הסבר נוסף?",
+        steps: [],
+        requiredInfo: [],
+        followUpQuestion: "כתוב: חישוב / מקור / הסבר",
+        cautions: [],
+        sources: [],
+        confidence: "high",
+      };
+    }
+  }
+
+  if (state.topic === "earthing") {
+    if (cmd === "calc") {
+      const nextQ = nextEarthingQuestion(state);
+      if (nextQ) {
+        return {
+          ...nextQ,
+          bottomLine: "מעולה, נחשב. " + nextQ.bottomLine,
+        };
+      }
+      // All slots filled - can provide answer
+      return {
+        kind: "flow",
+        title: "חישוב ערך הארקה",
+        bottomLine: `לפי הנתונים: ${state.slots.measurement_type}, ${state.slots.system}, ${state.slots.value_ohm ? state.slots.value_ohm + "Ω" : "לא נמדד"}.`,
+        steps: [
+          "יש לבדוק מול תקנות את הערך המותר לפי סוג המדידה והרשת",
+          state.slots.system === "TT" && state.slots.rcd_ma
+            ? `ב-TT עם פחת ${state.slots.rcd_ma}mA, יש לבדוק RA×IΔn מול מתח מגע מותר`
+            : "",
+        ].filter(Boolean),
+        requiredInfo: ["יש לבדוק מול תקנות את הערך המותר המדויק"],
+        followUpQuestion: "רוצה מקור מהתקנות?",
+        cautions: ["חישוב זה הוא אומדן. יש לבדוק מול תקן לפני עבודה."],
+        sources: [],
+        confidence: "medium",
+      };
+    }
+    if (cmd === "source") {
+      return {
+        kind: "rag",
+        title: "מקור — הארקה",
+        bottomLine: "מחפש מקורות בתקנות על ערכי הארקה...",
+        steps: [],
+        requiredInfo: ["מחפש מקורות רלוונטיים..."],
+        followUpQuestion: "רוצה חישוב או רק מקור?",
+        cautions: [],
+        sources: [],
+        confidence: "low",
+      };
+    }
+    if (cmd === "explain") {
+      return {
+        kind: "flow",
+        title: "הסבר — הארקה",
+        bottomLine: "ערך הארקה תלוי בסוג המדידה (RA/Zs/PE) ובשיטת האיפוס (TT/TN).",
+        steps: [
+          "RA = התנגדות אלקטרודת הארקה (רלוונטי ל-TT)",
+          "Zs = לולאת תקלה (רלוונטי ל-TN)",
+          "רציפות PE = בדיקה אחרת לגמרי",
+        ],
+        requiredInfo: [],
+        followUpQuestion: "רוצה חישוב או מקור מהתקנות?",
+        cautions: [],
+        sources: [],
+        confidence: "high",
+      };
+    }
+    if (cmd === "continue") {
+      const nextQ = nextEarthingQuestion(state);
+      if (nextQ) return nextQ;
+      return {
+        kind: "flow",
+        title: "הארקה",
+        bottomLine: "מה תרצה לעשות? חישוב, מקור, או הסבר נוסף?",
+        steps: [],
+        requiredInfo: [],
+        followUpQuestion: "כתוב: חישוב / מקור / הסבר",
+        cautions: [],
+        sources: [],
+        confidence: "high",
+      };
+    }
+  }
+
   return null;
 }
 
@@ -1098,27 +1370,63 @@ export default async function handler(
     stage: incomingState.stage || "collecting",
   };
 
+  // ===== COMMAND HANDLER: Short words like "חישוב", "מקור", "הסבר" =====
+  const shortCmd = detectShortCommand(q);
+  if (shortCmd && hasActiveTopic && !baseChatState.pendingSlot) {
+    const cmdAnswer = handleShortCommand(shortCmd, baseChatState, q);
+    if (cmdAnswer) {
+      return res.status(200).json({
+        ...cmdAnswer,
+        chatState: baseChatState,
+      });
+    }
+  }
+
   // ===== SLOT FILLING: If there's a pending slot, treat user message as ANSWER, not new intent =====
-  if (baseChatState.pendingSlot && baseChatState.topic === "earthing") {
-    const applied = applyPendingAnswer(baseChatState, q);
-    if (applied) {
-      // Slot was filled, now ask next question or provide answer
-      const nextQ = nextEarthingQuestion(baseChatState);
-      if (nextQ) {
-        return res.status(200).json({
-          ...nextQ,
-          chatState: baseChatState,
-        });
+  if (baseChatState.pendingSlot) {
+    if (baseChatState.topic === "earthing") {
+      const applied = applyPendingAnswer(baseChatState, q);
+      if (applied) {
+        // Slot was filled, now ask next question or provide answer
+        const nextQ = nextEarthingQuestion(baseChatState);
+        if (nextQ) {
+          return res.status(200).json({
+            ...nextQ,
+            chatState: baseChatState,
+          });
+        }
+        // All slots filled - continue to RAG/answer generation below
+      } else {
+        // Couldn't parse answer - ask again
+        const retryQ = nextEarthingQuestion(baseChatState);
+        if (retryQ) {
+          return res.status(200).json({
+            ...retryQ,
+            chatState: baseChatState,
+          });
+        }
       }
-      // All slots filled - continue to RAG/answer generation below
-    } else {
-      // Couldn't parse answer - ask again
-      const retryQ = nextEarthingQuestion(baseChatState);
-      if (retryQ) {
-        return res.status(200).json({
-          ...retryQ,
-          chatState: baseChatState,
-        });
+    } else if (baseChatState.topic === "loop_fault") {
+      const applied = applyPendingAnswer(baseChatState, q);
+      if (applied) {
+        // Slot was filled, now ask next question or provide answer
+        const nextQ = nextLoopFaultQuestion(baseChatState);
+        if (nextQ) {
+          return res.status(200).json({
+            ...nextQ,
+            chatState: baseChatState,
+          });
+        }
+        // All slots filled - continue to RAG/answer generation below
+      } else {
+        // Couldn't parse answer - ask again
+        const retryQ = nextLoopFaultQuestion(baseChatState);
+        if (retryQ) {
+          return res.status(200).json({
+            ...retryQ,
+            chatState: baseChatState,
+          });
+        }
       }
     }
   }
@@ -1137,8 +1445,8 @@ export default async function handler(
     }
   }
 
-  // ===== Short follow-up questions: only if NO pending slot =====
-  if (!baseChatState.pendingSlot && isShortFollowupQuestion(q) && hasActiveTopic) {
+  // ===== Short follow-up questions: only if NO pending slot and NO short command =====
+  if (!baseChatState.pendingSlot && !shortCmd && isShortFollowupQuestion(q) && hasActiveTopic) {
     const clarify = buildTopicClarifyAnswer(activeTopic);
     return res.status(200).json({
       ...clarify,
