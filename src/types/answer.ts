@@ -1,3 +1,5 @@
+import type { ChatState } from "./chat";
+
 export type SourceRef = { title: string; section: string; url?: string };
 
 export type Answer = {
@@ -12,4 +14,5 @@ export type Answer = {
   cautions?: string[];
   sources?: SourceRef[];
   confidence: "high" | "medium" | "low";
+  chatState?: ChatState;
 };

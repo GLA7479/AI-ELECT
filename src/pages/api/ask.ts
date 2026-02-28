@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { normalizeHebrewText } from "../../../lib/normalizeHebrewText";
 import type { Answer, SourceRef } from "../../types/answer";
 import { runEngine } from "../../lib/engine";
+import type { ChatMessage, ChatState, ChatTopic, PendingSlot } from "../../types/chat";
 
 type AnswerSegment = {
   title: string;
@@ -17,6 +18,226 @@ type AskHistoryItem = {
   q: string;
   createdAt?: string;
 };
+
+const TECHNICAL_QUERY_TERMS =
+  /(zs|ra|פחת|אמפר|כבל|חתך|נפילת מתח|מאמ"?ת|נתיך|tt|tn|אוהם|ω|rcd|לולאת תקלה|הארקה|מפסק)/i;
+
+// ===== PARSERS FOR USER ANSWERS =====
+
+function parseOhms(text: string): number | null {
+  const s = (text || "").replace(/,/g, ".").toLowerCase();
+  const m = s.match(/(\d+(\.\d+)?)/);
+  if (!m) return null;
+  if (!(s.includes("אום") || s.includes("ω") || s.includes("ohm") || s.includes("אוהם"))) return null;
+  return Number(m[1]);
+}
+
+function parseMeasurementType(text: string): "RA" | "ZS" | "PE" | null {
+  const t = normalizeHebrewText(text || "").toLowerCase();
+  if (/ra|r_a|אלקטרוד|אלקטרודה/.test(t)) return "RA";
+  if (/zs|לולאת תקלה|לולאה/.test(t)) return "ZS";
+  if (/pe|רציפות/.test(t)) return "PE";
+  return null;
+}
+
+function parseSystem(text: string): "TT" | "TN" | "UNKNOWN" | null {
+  const t = normalizeHebrewText(text || "").toLowerCase();
+  if (/\btt\b/.test(t)) return "TT";
+  if (/\btn\b/.test(t)) return "TN";
+  if (/לא יודע|לא ידוע|unknown/.test(t)) return "UNKNOWN";
+  return null;
+}
+
+function parseRcd(text: string): 30 | 100 | 300 | null | undefined {
+  const t = normalizeHebrewText(text || "").toLowerCase();
+  if (/30/.test(t)) return 30;
+  if (/100/.test(t)) return 100;
+  if (/300/.test(t)) return 300;
+  if (/אין|ללא/.test(t)) return null;
+  return undefined;
+}
+
+// ===== SLOT FILLING LOGIC =====
+
+function applyPendingAnswer(state: ChatState, userText: string): boolean {
+  const t = userText.trim();
+  if (!state.pendingSlot) return false;
+
+  if (state.pendingSlot === "measurement_type") {
+    const parsed = parseMeasurementType(t);
+    if (parsed) {
+      state.slots.measurement_type = parsed;
+      state.pendingSlot = undefined;
+      return true;
+    }
+  }
+
+  if (state.pendingSlot === "system") {
+    const parsed = parseSystem(t);
+    if (parsed) {
+      state.slots.system = parsed;
+      state.pendingSlot = undefined;
+      return true;
+    }
+  }
+
+  if (state.pendingSlot === "rcd") {
+    const parsed = parseRcd(t);
+    if (parsed !== undefined) {
+      state.slots.rcd_ma = parsed;
+      state.pendingSlot = undefined;
+      return true;
+    }
+  }
+
+  // Always try to capture ohms value if present
+  const ohm = parseOhms(t);
+  if (ohm != null) {
+    state.slots.value_ohm = ohm;
+  }
+
+  return false;
+}
+
+function nextEarthingQuestion(state: ChatState): Answer | null {
+  const { slots } = state;
+
+  // Missing measurement type
+  if (!slots.measurement_type) {
+    state.pendingSlot = "measurement_type";
+    return {
+      kind: "flow",
+      title: "הארקה / לולאת תקלה",
+      bottomLine: "כדי לקבוע 'ערך הארקה תקין' צריך לדעת מה בדיוק נמדד.",
+      steps: [],
+      requiredInfo: ["מה נמדד: RA / Zs / רציפות PE"],
+      followUpQuestion: "מה נמדד: RA (אלקטרודה), Zs (לולאת תקלה) או רציפות PE?",
+      cautions: [],
+      sources: [],
+      confidence: "low",
+    };
+  }
+
+  // If user provided ohms but didn't tell system
+  if (!slots.system || slots.system === "UNKNOWN") {
+    state.pendingSlot = "system";
+    return {
+      kind: "flow",
+      title: "הארקה / לולאת תקלה",
+      bottomLine: "כדי לקבוע תקינות צריך לדעת שיטת איפוס (TT/TN).",
+      steps: [],
+      requiredInfo: ["שיטת איפוס: TT / TN"],
+      followUpQuestion: "האם זו רשת TT או TN? (אם לא יודע — כתוב 'לא יודע')",
+      cautions: [],
+      sources: [],
+      confidence: "low",
+    };
+  }
+
+  // If TT and RA, ask RCD
+  if (slots.measurement_type === "RA" && slots.system === "TT" && slots.rcd_ma == null) {
+    state.pendingSlot = "rcd";
+    return {
+      kind: "flow",
+      title: "הארקה / לולאת תקלה",
+      bottomLine: "ב-TT הערכת תקינות RA תלויה בזרם הפחת (IΔn).",
+      steps: [],
+      requiredInfo: ["זרם פחת: 30mA / 100mA / 300mA / אין"],
+      followUpQuestion: "איזה פחת מותקן? 30mA / 100mA / 300mA / אין",
+      cautions: [],
+      sources: [],
+      confidence: "low",
+    };
+  }
+
+  state.pendingSlot = undefined;
+  return null;
+}
+
+function normalizeChatState(raw: any): ChatState {
+  const base: ChatState = {
+    topic: "general",
+    stage: "collecting",
+    slots: {},
+  };
+  if (!raw || typeof raw !== "object") return base;
+  return {
+    topic: raw.topic || base.topic,
+    stage: raw.stage || base.stage,
+    pendingSlot: raw.pendingSlot || undefined,
+    slots: raw.slots && typeof raw.slots === "object" ? raw.slots : {},
+    pendingQuestion: typeof raw.pendingQuestion === "string" ? raw.pendingQuestion : undefined,
+    lastSummary: typeof raw.lastSummary === "string" ? raw.lastSummary : undefined,
+  };
+}
+
+function topicFromIssueType(issueType?: string): ChatTopic | null {
+  const t = normalizeHebrewText(issueType || "");
+  if (!t) return null;
+  if (/הארקה|לולאת תקלה/i.test(t)) return "loop_fault";
+  if (/פחת|rcd/i.test(t)) return "rcd";
+  if (/חימום כבלים|כבל|עומס/i.test(t)) return "cable";
+  if (/לוח חשמל|פאזה/i.test(t)) return "general";
+  return null;
+}
+
+function detectChatTopic(question: string, current: ChatTopic | undefined): ChatTopic {
+  const q = normalizeHebrewText(question || "");
+  if (/(לולאת תקלה|\bzs\b|fault loop)/i.test(q)) return "loop_fault";
+  if (/(הארקה|ra|r_a|אלקטרודה|השוואת פוטנציאלים)/i.test(q)) return "earthing";
+  if (/(פחת|rcd|fid|ממסר)/i.test(q)) return "rcd";
+  if (/(כבל|חתך|נפילת מתח|vd%|זרם מותר)/i.test(q)) return "cable";
+  if (/(אין חשמל|אין מתח|לא מגיע מתח|נפל)/i.test(q)) return "general";
+  return current || "general";
+}
+
+function isShortFollowupQuestion(question: string): boolean {
+  const q = normalizeHebrewText(question || "").trim();
+  return q.length <= 25 && !TECHNICAL_QUERY_TERMS.test(q);
+}
+
+function buildTopicClarifyAnswer(topic: ChatTopic): Answer {
+  if (topic === "loop_fault") {
+    return {
+      kind: "flow",
+      title: "שאלת הבהרה",
+      bottomLine: "כדי להשוות צריך לדעת בין מה למה.",
+      steps: [],
+      requiredInfo: ["מה שני הדברים להשוואה"],
+      followUpQuestion:
+        'בין מה למה תרצה להשוות? למשל: Zs (לולאת תקלה) מול RA (אלקטרודה), או TT מול TN, או מאמ"ת B16 מול C16.',
+      cautions: [],
+      sources: [],
+      confidence: "high",
+    };
+  }
+  if (topic === "earthing") {
+    return {
+      kind: "flow",
+      title: "שאלת הבהרה",
+      bottomLine: "כדי לתת תשובה מדויקת צריך לדעת מה בדיוק להשוות או לבדוק.",
+      steps: [],
+      requiredInfo: ["האם מדובר ב-RA / Zs / רציפות PE", "מה סוג הרשת TT/TN"],
+      followUpQuestion:
+        "תכתוב בדיוק מה נמדד ומה תרצה להשוות (למשל RA מול ערך יעד, או TT מול TN).",
+      cautions: [],
+      sources: [],
+      confidence: "high",
+    };
+  }
+  return {
+    kind: "flow",
+    title: "שאלת הבהרה",
+    bottomLine: "כדי להמשיך בשיחה צריך עוד פרט קצר.",
+    steps: [],
+    requiredInfo: ["מה בדיוק אתה רוצה שאבצע עכשיו"],
+    followUpQuestion:
+      "תכתוב במשפט קצר: מה הפעולה הבאה שאתה רוצה — השוואה, חישוב, או הסבר?",
+    cautions: [],
+    sources: [],
+    confidence: "high",
+  };
+}
 
 type AskDebugPayload = {
   retrievedTitles: Array<{ title: string; section: string }>;
@@ -74,6 +295,84 @@ function sanitizeUserQuestion(input: string): string {
 function looksLikeEarthingOhmsQuestion(q: string) {
   const s = (q || "").replace(/\s+/g, " ");
   return /הארק|הארקה/.test(s) && (/(אוהם|Ω|ohm)/i.test(s) || /התנגדות/.test(s));
+}
+
+function isEarthingValueQuestion(q: string) {
+  const s = normalizeHebrewText(q || "");
+  return /הארק|הארקה/i.test(s) && /(ערך|כמה|תקין|מותר|אוהם|Ω|ohm|התנגדות)/i.test(s);
+}
+
+function isLoopFaultQuestion(q: string) {
+  const s = normalizeHebrewText(q || "");
+  return /(לולאת תקלה|\bzs\b|fault loop)/i.test(s);
+}
+
+function isGlossaryLoopFaultQuestion(q: string) {
+  const s = normalizeHebrewText(q || "").trim();
+  const noPunct = s.replace(/[?؟.!]/g, "").trim();
+  return noPunct.length <= 20 && /(לולאת תקלה|\bzs\b)/i.test(noPunct);
+}
+
+function hasEarthingMeasurementInfo(params: {
+  question: string;
+  flow?: any;
+}): boolean {
+  const q = normalizeHebrewText(params.question || "").toLowerCase();
+  const flow = params.flow || {};
+  const measured = String(flow.measuredType || flow.measurementType || "").toLowerCase();
+  const system = String(flow.systemType || flow.earthingSystem || "").toLowerCase();
+  const hasMeasured =
+    /\b(ra|r_a|zs|pe)\b/.test(measured) || /(ra|r_a|zs|רציפות\s*pe|אלקטרוד)/i.test(q);
+  const hasSystem = /\b(tt|tn)\b/.test(system) || /\b(tt|tn)\b/i.test(q);
+  return hasMeasured && hasSystem;
+}
+
+function scoreChunkForEarthingValueQuestion(question: string, text: string): number {
+  const q = normalizeHebrewText(question || "").toLowerCase();
+  const s = normalizeHebrewText(text || "").toLowerCase();
+  let score = 0;
+
+  if (/הארק/.test(q)) {
+    score += /(הארק|מוליך הארקה|השוואת פוטנציאלים|pe)/i.test(s) ? 2 : -2;
+  }
+  if (/(אוהם|ω|ohm|התנגדות)/i.test(q)) {
+    score += /(אוהם|ω|ohm|התנגדות|ra|r_a|zs)/i.test(s) ? 5 : -5;
+  }
+  if (/(ra|r_a|zs|tt|tn|iδn|iδn|מפסק מגן|פחת|לולאת תקלה)/i.test(s)) score += 3;
+  if (/(סוג ציוד|חיים מבודדים|בידוד בסיסי|בידוד כפול)/i.test(s)) score -= 3;
+  if (/\d+(\.\d+)?\s*(ω|ohm|ma|%|שנ|sec|v)\b/i.test(s)) score += 2;
+
+  return score;
+}
+
+function numericEvidenceExists(question: string, allSourcesText: string): boolean {
+  const needsNumeric = /(ערך|כמה|תקין|מותר|לא יעלה|לכל היותר|אוהם|ω|ohm|%|ma|mA)/i.test(
+    question || ""
+  );
+  if (!needsNumeric) return true;
+  return (
+    /(\d+(\.\d+)?)\s*(ω|ohm|ma|%|שנ|sec|v)\b/i.test(allSourcesText || "") ||
+    /(לא יעלה על|לכל היותר|עד\b)/i.test(allSourcesText || "")
+  );
+}
+
+function earthingTermEvidenceExists(allSourcesText: string): boolean {
+  return /(אוהם|Ω|ohm|התנגדות|R_A|RA\b|Zs\b|לולאת תקלה|TT\b|TN\b|מפסק מגן|פחת|IΔn|iδn)/i.test(
+    allSourcesText || ""
+  );
+}
+
+function loopFaultEvidenceExists(allSourcesText: string): boolean {
+  return /(לולאת תקלה|\bzs\b|fault loop|impedance|אימפדנס|התנגדות לולאה)/i.test(
+    allSourcesText || ""
+  );
+}
+
+function legalDocTier(docTypeRaw: string): number {
+  const docType = (docTypeRaw || "").toLowerCase();
+  if (docType.startsWith("regulation_") || docType.startsWith("safety_")) return 0;
+  if (docType.startsWith("law_")) return 1;
+  return 2;
 }
 
 function sourcesContainAny(sourcesText: string, terms: RegExp[]) {
@@ -543,7 +842,8 @@ function detectDomainIntent(question: string): DomainIntent {
   const q = normalizeHebrewText(question || "").toLowerCase();
   if (/(אמבט|אמבטיה|מקלח|מקלחת|חדר רחצה|רטוב|אזור\s*[012])/.test(q)) return "bathroom";
   if (/(ברז גינה|גינה|חצר|חוץ)/.test(q)) return "garden";
-  if (/(הארקה|מוליך הארקה|השוואת פוטנציאלים|pe)/.test(q)) return "grounding";
+  if (/(הארקה|מוליך הארקה|השוואת פוטנציאלים|\bpe\b|לולאת תקלה|\bzs\b)/.test(q))
+    return "grounding";
   if (/(פחת|rcd|ממסר פחת)/.test(q)) return "rcd";
   if (/(לוח|לוחות|מפסק ראשי|מאמ\"ת|מאמת)/.test(q)) return "panels";
   if (/(מונה|מונים|ריכוז מונים|ארון מונים)/.test(q)) return "metering";
@@ -568,7 +868,17 @@ function domainRelevanceScore(
     case "garden":
       return hasAny([/ברז גינה/, /גינה/, /חצר/, /מתקן חוץ/, /חיצוני/]) ? 1 : 0;
     case "grounding":
-      return hasAny([/הארקה/, /מוליך הארקה/, /השוואת פוטנציאלים/, /\bpe\b/]) ? 1 : 0;
+      return hasAny([
+        /הארקה/,
+        /מוליך הארקה/,
+        /השוואת פוטנציאלים/,
+        /\bpe\b/,
+        /לולאת תקלה/,
+        /\bzs\b/,
+        /fault loop/i,
+      ])
+        ? 1
+        : 0;
     case "rcd":
       return hasAny([/פחת/, /\brcd\b/, /ממסר פחת/]) ? 1 : 0;
     case "panels":
@@ -766,6 +1076,9 @@ export default async function handler(
     modeHint?: "auto" | "calc" | "flow" | "rag";
     calc?: any;
     flow?: any;
+    conversationId?: string;
+    messages?: ChatMessage[];
+    chatState?: ChatState;
   };
   // Debug incoming payload to diagnose UI-side wrong question forwarding.
   // eslint-disable-next-line no-console
@@ -773,6 +1086,68 @@ export default async function handler(
   const q = (question || "").trim();
   if (!q) {
     return res.status(400).json({ error: "Missing question" });
+  }
+  const issueTypeRaw = String(req.body?.issueType || "").trim();
+  const incomingState = normalizeChatState(req.body?.chatState);
+  const topicByIssueType = topicFromIssueType(issueTypeRaw);
+  const activeTopic = detectChatTopic(q, topicByIssueType || incomingState.topic);
+  const hasActiveTopic = !!activeTopic && activeTopic !== "general";
+  const baseChatState: ChatState = {
+    ...incomingState,
+    topic: activeTopic,
+    stage: incomingState.stage || "collecting",
+  };
+
+  // ===== SLOT FILLING: If there's a pending slot, treat user message as ANSWER, not new intent =====
+  if (baseChatState.pendingSlot && baseChatState.topic === "earthing") {
+    const applied = applyPendingAnswer(baseChatState, q);
+    if (applied) {
+      // Slot was filled, now ask next question or provide answer
+      const nextQ = nextEarthingQuestion(baseChatState);
+      if (nextQ) {
+        return res.status(200).json({
+          ...nextQ,
+          chatState: baseChatState,
+        });
+      }
+      // All slots filled - continue to RAG/answer generation below
+    } else {
+      // Couldn't parse answer - ask again
+      const retryQ = nextEarthingQuestion(baseChatState);
+      if (retryQ) {
+        return res.status(200).json({
+          ...retryQ,
+          chatState: baseChatState,
+        });
+      }
+    }
+  }
+
+  // ===== If no pending slot, check if we need to start slot filling for earthing =====
+  if (baseChatState.topic === "earthing" && !baseChatState.pendingSlot) {
+    const earthingValueIntent = isEarthingValueQuestion(q);
+    if (earthingValueIntent) {
+      const nextQ = nextEarthingQuestion(baseChatState);
+      if (nextQ) {
+        return res.status(200).json({
+          ...nextQ,
+          chatState: baseChatState,
+        });
+      }
+    }
+  }
+
+  // ===== Short follow-up questions: only if NO pending slot =====
+  if (!baseChatState.pendingSlot && isShortFollowupQuestion(q) && hasActiveTopic) {
+    const clarify = buildTopicClarifyAnswer(activeTopic);
+    return res.status(200).json({
+      ...clarify,
+      chatState: {
+        ...baseChatState,
+        stage: "collecting",
+        pendingQuestion: clarify.followUpQuestion,
+      },
+    });
   }
 
   const engine = runEngine({
@@ -782,13 +1157,70 @@ export default async function handler(
     flow,
   });
   if (engine.answer) {
-    return res.status(200).json(engine.answer);
+    return res.status(200).json({
+      ...engine.answer,
+      chatState: {
+        ...incomingState,
+        topic: activeTopic,
+        stage: "answering",
+        pendingQuestion: undefined,
+        lastSummary: engine.answer.bottomLine,
+      },
+    });
   }
   const normalizedQuestion = sanitizeUserQuestion(q);
   const selectedScope: ScopeMode = scope || "law_only";
   const safeHistory = Array.isArray(history) ? history.slice(-6) : [];
   const contextualQuestion = buildContextualQuestion(normalizedQuestion, safeHistory);
   const domainIntent = detectDomainIntent(contextualQuestion);
+  const earthingValueIntent = isEarthingValueQuestion(contextualQuestion);
+  const loopFaultIntent = isLoopFaultQuestion(contextualQuestion);
+
+  if (isGlossaryLoopFaultQuestion(normalizedQuestion)) {
+    return res.status(200).json({
+      kind: "flow",
+      title: "לולאת תקלה (Zs)",
+      bottomLine:
+        "Zs (לולאת תקלה) היא האימפדנס של מסלול התקלה (פאזה→תקלה→PE/PEN/אדמה→מקור), שמשפיע על זרם התקלה וזמן הניתוק של ההגנה.",
+      steps: [
+        "אם המטרה היא תקין/לא תקין: משווים לדרישת זמן ניתוק של ההגנה לפי סוג הרשת (TN/TT).",
+        "ב-TT עם RCD, לרוב בודקים גם RA×IΔn מול מתח מגע מותר.",
+        "כדי לחשב Zs מקסימלי צריך: סוג הגנה (B/C/D/נתיך), זרם נקוב, מתח וזמן ניתוק יעד.",
+      ],
+      requiredInfo: [
+        "האם אתה רוצה הגדרה בלבד או חישוב",
+        "סוג רשת: TT/TN",
+        "סוג ההגנה והזרם הנקוב",
+      ],
+      followUpQuestion:
+        'אתה רוצה הגדרה בלבד, או חישוב Zs מקסימלי? אם חישוב — מה סוג ההגנה (B/C/D/נתיך) והזרם הנקוב?',
+      cautions: ["לא עובדים בלוח חי ללא הסמכה, ציוד מתאים ונהלי בטיחות."],
+      sources: [],
+      confidence: "high",
+      chatState: {
+        ...baseChatState,
+        topic: "loop_fault",
+        stage: "collecting",
+        pendingQuestion:
+          'אתה רוצה הגדרה בלבד, או חישוב Zs מקסימלי? אם חישוב — מה סוג ההגנה (B/C/D/נתיך) והזרם הנקוב?',
+      },
+    });
+  }
+
+  // Hard flow gate for "earthing value" questions:
+  // avoid guessing from generic legal chunks when RA/Zs/PE context is missing.
+  // NOTE: This is now handled by slot-filling above, but keeping as fallback for non-slot paths
+  if (earthingValueIntent && !hasEarthingMeasurementInfo({ question: contextualQuestion, flow }) && !baseChatState.pendingSlot) {
+    if (baseChatState.topic === "earthing") {
+      const nextQ = nextEarthingQuestion(baseChatState);
+      if (nextQ) {
+        return res.status(200).json({
+          ...nextQ,
+          chatState: baseChatState,
+        });
+      }
+    }
+  }
 
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -826,10 +1258,17 @@ export default async function handler(
   }
 
   let retrievalQuery = expandedQuery;
-  const issueTypeRaw = String(req.body?.issueType || "").trim();
   const isEarthingIssueType = /הארקה|לולאת תקלה/i.test(issueTypeRaw);
-  if (looksLikeEarthingOhmsQuestion(contextualQuestion) || (isEarthingIssueType && /אוהם|Ω|ohm|התנגדות/i.test(contextualQuestion))) {
-    retrievalQuery = `${expandedQuery} התנגדות אוהם Ω RA R_A Zs לולאת תקלה ערך מותר`;
+  if (
+    earthingValueIntent ||
+    looksLikeEarthingOhmsQuestion(contextualQuestion) ||
+    (isEarthingIssueType && /אוהם|Ω|ohm|התנגדות/i.test(contextualQuestion))
+  ) {
+    retrievalQuery = `${expandedQuery} RA R_A התנגדות אלקטרודה Zs לולאת תקלה TT TN מפסק מגן פחת IΔn מתח מגע זמן ניתוק Ω ohm ערך מותר לא יעלה`;
+  }
+  if (loopFaultIntent) {
+    retrievalQuery +=
+      ' Zs impedance fault loop לולאת תקלה התנגדות לולאה זמן ניתוק מאמ"ת B C D נתיך Ia Uo';
   }
 
   const queryVariants = buildExpandedQueries(retrievalQuery);
@@ -875,6 +1314,10 @@ export default async function handler(
         "כדי לדייק: על איזה סוג מתקן/סביבה אתה שואל (למשל אמבטיה, לוח, הארקה, אתר רפואי)?",
       sources: [],
       confidence: "low",
+      chatState: {
+        ...baseChatState,
+        stage: "collecting",
+      },
     });
   }
 
@@ -916,16 +1359,6 @@ export default async function handler(
     const publisher = (sourcePublishers[h.source_title] || "").toLowerCase();
     const url = (h.source_url || "").toLowerCase();
     const title = (h.source_title || "").toLowerCase();
-    if (
-      isPrimaryLocalLawSource({
-        title: h.source_title,
-        publisher,
-        url,
-      })
-    ) {
-      return -1;
-    }
-
     const isLawDocType =
       docType.startsWith("law_") ||
       docType.startsWith("regulation_") ||
@@ -940,7 +1373,7 @@ export default async function handler(
       isElectricLawish(title, url);
 
     if (isLawDocType || isKnownLawPublisher || isGovElectricLaw) {
-      return 0;
+      return legalDocTier(docType) - 2; // regulation/safety first, then law
     }
 
     // Utility (IEC המעגל)
@@ -978,27 +1411,10 @@ export default async function handler(
   let rankedHits = [...hits].sort((a, b) => {
     const priorityA = getPriorityForHit(a);
     const priorityB = getPriorityForHit(b);
-    const sourceBoostA = isPrimaryLocalLawSource({
-      title: a.source_title,
-      publisher: sourcePublishers[a.source_title],
-      url: a.source_url,
-    })
-      ? 1
-      : 0;
-    const sourceBoostB = isPrimaryLocalLawSource({
-      title: b.source_title,
-      publisher: sourcePublishers[b.source_title],
-      url: b.source_url,
-    })
-      ? 1
-      : 0;
 
     // First sort by priority (lower is better), then by rank
     if (priorityA !== priorityB) {
       return priorityA - priorityB;
-    }
-    if (sourceBoostA !== sourceBoostB) {
-      return sourceBoostB - sourceBoostA;
     }
     return (b.rank || 0) - (a.rank || 0);
   });
@@ -1097,6 +1513,16 @@ export default async function handler(
       if (url.includes("gov.il") && isElectricLaw) return true;
       return false;
     });
+
+    // In strict legal mode, prefer regulation/safety chunks over generic law chunks.
+    rankedHits = rankedHits.sort((a, b) => {
+      const aType = (sourceDocTypes[a.source_title] || "").toLowerCase();
+      const bType = (sourceDocTypes[b.source_title] || "").toLowerCase();
+      const aOrder = aType.startsWith("regulation_") || aType.startsWith("safety_") ? 0 : aType.startsWith("law_") ? 1 : 2;
+      const bOrder = bType.startsWith("regulation_") || bType.startsWith("safety_") ? 0 : bType.startsWith("law_") ? 1 : 2;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return (b.rank || 0) - (a.rank || 0);
+    });
   } else if (selectedScope === "law_plus_utility") {
     rankedHits = rankedHits.filter((h) => getPriorityForHit(h) <= 1);
   }
@@ -1155,6 +1581,10 @@ export default async function handler(
         "בחר הקשר: בית מגורים / אתר רפואי / מתקן אחר, ומה בדיוק נדרש: מרחק, סוג שקע, או דרישת הגנה.",
       sources: [],
       confidence: "low",
+      chatState: {
+        ...baseChatState,
+        stage: "collecting",
+      },
     });
   }
 
@@ -1198,12 +1628,47 @@ export default async function handler(
           "כדי למקד: באיזה הקשר מדובר — בית מגורים, אתר רפואי, או מתקן אחר?",
         sources: [],
         confidence: "low",
+        chatState: {
+          ...baseChatState,
+          stage: "collecting",
+        },
       });
     }
   }
 
+  if (earthingValueIntent && rankedHits.length > 0) {
+    const beforeTop = rankedHits.slice(0, 8).map((h) => ({
+      title: h.source_title,
+      chunk_index: (h.locator && (h.locator.chunk || h.locator.chunk_index)) || null,
+      section: h.section || "",
+      rank: Number(h.rank || 0).toFixed(3),
+    }));
+    // eslint-disable-next-line no-console
+    console.log("[EARTHING before rerank]", JSON.stringify(beforeTop, null, 2));
+
+    rankedHits = [...rankedHits].sort((a, b) => {
+      const sa = scoreChunkForEarthingValueQuestion(contextualQuestion, a.text || "");
+      const sb = scoreChunkForEarthingValueQuestion(contextualQuestion, b.text || "");
+      if (sa !== sb) return sb - sa;
+      return (b.rank || 0) - (a.rank || 0);
+    });
+
+    const afterTop = rankedHits.slice(0, 8).map((h) => ({
+      title: h.source_title,
+      chunk_index: (h.locator && (h.locator.chunk || h.locator.chunk_index)) || null,
+      section: h.section || "",
+      rank: Number(h.rank || 0).toFixed(3),
+      score: scoreChunkForEarthingValueQuestion(contextualQuestion, h.text || ""),
+    }));
+    // eslint-disable-next-line no-console
+    console.log("[EARTHING after rerank]", JSON.stringify(afterTop, null, 2));
+  }
+
   // Prefer cleaner and more diverse hits (avoid multiple near-identical menu pages).
   const sortedByQuality = [...rankedHits].sort((a, b) => {
+    const tierA = legalDocTier(sourceDocTypes[a.source_title] || "");
+    const tierB = legalDocTier(sourceDocTypes[b.source_title] || "");
+    if (tierA !== tierB) return tierA - tierB;
     const qa = noiseScore(a.text || "");
     const qb = noiseScore(b.text || "");
     if (qa !== qb) return qa - qb;
@@ -1282,6 +1747,9 @@ export default async function handler(
   const allSourcesText = segments
     .map((x) => `${x.title}\n${x.section}\n${x.text || ""}`)
     .join("\n---\n");
+  const allSourcesEvidenceText = top
+    .map((h) => normalizeHebrewText(h.text || ""))
+    .join("\n");
 
   if (looksLikeEarthingOhmsQuestion(q)) {
     const ok = sourcesContainAny(allSourcesText, [
@@ -1310,16 +1778,82 @@ export default async function handler(
           "מה בדיוק נמדד: R_A של האלקטרודה, Zs (לולאת תקלה), או רציפות מוליך PE? ואיפה מדדת?",
         sources: [],
         confidence: "low",
+        chatState: {
+          ...baseChatState,
+          topic: "earthing",
+          stage: "collecting",
+        },
       });
     }
   }
 
-  const confidence =
+  if (earthingValueIntent && !earthingTermEvidenceExists(allSourcesEvidenceText)) {
+    return res.status(200).json({
+      kind: "flow",
+      title: "הארקה / לולאת תקלה",
+      bottomLine:
+        "במקורות שנשלפו לא נמצאו מונחים טכניים מספיקים (RA/Zs/Ω), לכן אי אפשר לקבוע ערך תקין כרגע.",
+      steps: [],
+      cautions: ["כדי לא להטעות, לא ניתן לתת ערך תקינות בלי מקור רלוונטי מפורש."],
+      requiredInfo: [
+        "מה נמדד: RA / Zs / רציפות PE",
+        "שיטת איפוס: TT / TN",
+        "נתון פחת (IΔn) אם קיים",
+      ],
+      followUpQuestion:
+        "מה נמדד בפועל (RA/Zs/PE), ומה שיטת האיפוס (TT/TN)?",
+      sources: [],
+      confidence: "low",
+      chatState: {
+        ...baseChatState,
+        topic: "earthing",
+        stage: "collecting",
+      },
+    });
+  }
+
+  if (loopFaultIntent && !loopFaultEvidenceExists(allSourcesEvidenceText)) {
+    return res.status(200).json({
+      kind: "rag",
+      title: "לולאת תקלה (Zs)",
+      bottomLine:
+        "לא הצלחתי לשלוף מהמאגר סעיף שמדבר על לולאת תקלה (Zs), לכן אני לא נותן תשובה מבוססת תקנות כרגע.",
+      steps: [],
+      cautions: ["אל תסתמך על תשובה ללא סעיף מתאים. עבודה בחשמל מסכנת חיים."],
+      requiredInfo: [
+        "סוג רשת (TT/TN)",
+        'סוג ההגנה (מאמ"ת B/C/D או נתיך + זרם נקוב)',
+        "מתח רשת (230/400)",
+        "האם נדרשת הגדרה או חישוב Zs מקסימלי",
+      ],
+      followUpQuestion:
+        "אתה רוצה הגדרה של Zs או חישוב Zs מקסימלי? ואם חישוב — מה סוג ההגנה והזרם הנקוב?",
+      sources: [],
+      confidence: "low",
+      chatState: {
+        ...baseChatState,
+        topic: "loop_fault",
+        stage: "collecting",
+      },
+    });
+  }
+
+  let confidence: "high" | "medium" | "low" =
     rankedHits[0].rank >= 1.2
       ? "high"
       : rankedHits[0].rank >= 0.7
         ? "medium"
         : "low";
+
+  if (!numericEvidenceExists(contextualQuestion, allSourcesEvidenceText)) {
+    confidence = "low";
+  }
+  if (earthingValueIntent && !earthingTermEvidenceExists(allSourcesEvidenceText)) {
+    confidence = "low";
+  }
+  if (loopFaultIntent && !loopFaultEvidenceExists(allSourcesEvidenceText)) {
+    confidence = "low";
+  }
 
   const llmResult = await generateConversationalAnswer({
     question: q,
@@ -1349,6 +1883,12 @@ export default async function handler(
   if (DEBUG) {
     return res.status(200).json({
       ...responsePayload,
+      chatState: {
+        ...baseChatState,
+        stage: "answering",
+        pendingQuestion: responsePayload.followUpQuestion,
+        lastSummary: responsePayload.bottomLine,
+      },
       debug: {
         retrievedTitles: sources.map((s) => ({
           title: s.title,
@@ -1373,6 +1913,12 @@ export default async function handler(
     followUpQuestion: responsePayload.followUpQuestion || undefined,
     sources: responsePayload.sources || [],
     confidence: responsePayload.confidence || "low",
+    chatState: {
+      ...baseChatState,
+      stage: responsePayload.followUpQuestion ? "collecting" : "answering",
+      pendingQuestion: responsePayload.followUpQuestion || undefined,
+      lastSummary: responsePayload.bottomLine,
+    },
   });
 }
 

@@ -6,6 +6,7 @@ import { db } from "../lib/db";
 import { offlineSearch } from "../lib/search";
 import { nanoid } from "../lib/utils";
 import type { Answer } from "../src/types/answer";
+import type { ChatMessage, ChatState } from "../src/types/chat";
 
 type ScopeMode = "law_only" | "law_plus_utility" | "all";
 type ConversationItem = { q: string; createdAt?: string };
@@ -22,12 +23,24 @@ async function askOnline(
   scope: ScopeMode,
   history: Array<{ q: string; createdAt?: string }>,
   issueType: string,
-  modeHint: "auto" | "calc" | "flow" | "rag"
+  modeHint: "auto" | "calc" | "flow" | "rag",
+  conversationId: string,
+  messages: ChatMessage[],
+  chatState: ChatState
 ) {
   const r = await fetch("/api/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, scope, history, issueType, modeHint }),
+    body: JSON.stringify({
+      question,
+      scope,
+      history,
+      issueType,
+      modeHint,
+      conversationId,
+      messages,
+      chatState,
+    }),
   });
 
   if (!r.ok) {
@@ -50,6 +63,13 @@ export default function HomePage() {
   const [conversationHistory, setConversationHistory] = useState<
     ConversationItem[]
   >([]);
+  const [conversationId, setConversationId] = useState<string>(() => nanoid());
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatState, setChatState] = useState<ChatState>({
+    topic: "general",
+    stage: "collecting",
+    slots: {},
+  });
 
   const online = useMemo(
     () => (typeof window === "undefined" ? true : navigator.onLine),
@@ -62,6 +82,14 @@ export default function HomePage() {
 
     setBusy(true);
     setAnswer(null);
+    const userMsg: ChatMessage = {
+      role: "user",
+      content: question,
+      createdAt: new Date().toISOString(),
+    };
+    const nextMessages = [...messages, userMsg].slice(-20);
+    setMessages(nextMessages);
+    setQ("");
 
     try {
       // Prefer online when available
@@ -71,9 +99,23 @@ export default function HomePage() {
           scope,
           conversationHistory,
           issueType,
-          modeHint
+          modeHint,
+          conversationId,
+          nextMessages,
+          chatState
         );
         setAnswer(data);
+        if (data.chatState) setChatState(data.chatState);
+        setMessages((prev) =>
+          [
+            ...prev,
+            {
+              role: "assistant" as const,
+              content: data.bottomLine,
+              createdAt: new Date().toISOString(),
+            },
+          ].slice(-20)
+        );
 
         await db.history.add({
           id: nanoid(),
@@ -95,7 +137,7 @@ export default function HomePage() {
       const hits = await offlineSearch(question, 4);
 
       if (hits.length === 0) {
-        setAnswer({
+        const offlineAnswer: Answer = {
           kind: "rag",
           title: "אוף־ליין",
           bottomLine:
@@ -105,9 +147,20 @@ export default function HomePage() {
           requiredInfo: ["נסח שאלה מדויקת יותר או התחבר לאינטרנט."],
           sources: [],
           confidence: "low",
-        });
+        };
+        setAnswer(offlineAnswer);
+        setMessages((prev) =>
+          [
+            ...prev,
+            {
+              role: "assistant" as const,
+              content: offlineAnswer.bottomLine,
+              createdAt: new Date().toISOString(),
+            },
+          ].slice(-20)
+        );
       } else {
-        setAnswer({
+        const offlineAnswer: Answer = {
           kind: "rag",
           title: "אוף־ליין",
           bottomLine:
@@ -116,7 +169,18 @@ export default function HomePage() {
           cautions: ["זוהי תשובת אוף־ליין. אמת מול מקורות רשמיים לפני ביצוע עבודה."],
           sources: hits.map((h) => ({ title: h.title, section: h.section })),
           confidence: "medium",
-        });
+        };
+        setAnswer(offlineAnswer);
+        setMessages((prev) =>
+          [
+            ...prev,
+            {
+              role: "assistant" as const,
+              content: offlineAnswer.bottomLine,
+              createdAt: new Date().toISOString(),
+            },
+          ].slice(-20)
+        );
       }
 
       await db.history.add({
@@ -193,13 +257,47 @@ export default function HomePage() {
           )}
           <button
             className="btn"
-            onClick={() => setConversationHistory([])}
+            onClick={() => {
+              setConversationHistory([]);
+              setMessages([]);
+              setConversationId(nanoid());
+              setChatState({ topic: "general", stage: "collecting", slots: {} });
+            }}
             disabled={busy || conversationHistory.length === 0}
             title="נקה הקשר שיחה"
           >
             נקה הקשר
           </button>
         </div>
+
+        {messages.length > 0 && (
+          <div className="card" style={{ marginTop: 10, padding: 12 }}>
+            <div className="small" style={{ fontWeight: 700, marginBottom: 8 }}>
+              שיחה
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {messages.slice(-8).map((m, i) => (
+                <div
+                  key={`${m.createdAt || i}-${i}`}
+                  className="small"
+                  style={{
+                    alignSelf: m.role === "user" ? "end" : "start",
+                    background: m.role === "user" ? "rgba(38,162,255,0.16)" : "rgba(255,255,255,0.06)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: "8px 10px",
+                    maxWidth: "92%",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                    {m.role === "user" ? "אתה" : "העוזר"}
+                  </div>
+                  <div>{m.content}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {conversationHistory.length > 0 && (
           <div className="small" style={{ marginTop: 8 }}>
