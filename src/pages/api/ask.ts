@@ -1,13 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { normalizeHebrewText } from "../../../lib/normalizeHebrewText";
-
-type Citation = {
-  title: string;
-  section: string;
-  url?: string;
-  locator?: any;
-};
+import type { AskResponse, AskSource } from "../../types/ask";
 
 type AnswerSegment = {
   title: string;
@@ -16,21 +10,44 @@ type AnswerSegment = {
   url?: string;
 };
 
-type AskResponse = {
-  answer: string;
-  mode: "online";
-  citations: Citation[];
-  segments: AnswerSegment[];
-  confidence: "high" | "medium" | "low";
-  followUpQuestion?: string;
-};
-
 type ScopeMode = "law_only" | "law_plus_utility" | "all";
 
 type AskHistoryItem = {
   q: string;
   createdAt?: string;
 };
+
+type AskDebugPayload = {
+  retrievedTitles: Array<{ title: string; section: string }>;
+  retrievedSnippets: Array<{ title: string; section: string; snippet: string }>;
+};
+
+type AskDebugResponse = AskResponse & {
+  debug: AskDebugPayload;
+};
+
+const SYSTEM_JSON = `
+You are a careful assistant for electricians in Israel.
+Answer ONLY from the provided sources. If sources are insufficient, say so and ask for missing info.
+Return ONLY valid JSON in this exact schema:
+
+{
+  "bottomLine": string,
+  "steps": string[],
+  "cautions": string[],
+  "requiredInfo"?: string[],
+  "followUpQuestion"?: string,
+  "sources": { "title": string, "section": string, "url"?: string }[],
+  "confidence": "high" | "medium" | "low"
+}
+
+Rules:
+- No markdown.
+- No extra keys.
+- If you are missing critical info to decide, set confidence="low", fill requiredInfo and followUpQuestion.
+- If safety-related, add cautions.
+- If the user asks "is X ohms OK", you MUST ask what measurement it is (RA vs Zs vs PE continuity) and the earthing system (TT/TN), unless sources explicitly define it.
+`;
 
 type DomainIntent =
   | "bathroom"
@@ -51,6 +68,15 @@ function sanitizeUserQuestion(input: string): string {
   return q;
 }
 
+function looksLikeEarthingOhmsQuestion(q: string) {
+  const s = (q || "").replace(/\s+/g, " ");
+  return /הארק|הארקה/.test(s) && (/(אוהם|Ω|ohm)/i.test(s) || /התנגדות/.test(s));
+}
+
+function sourcesContainAny(sourcesText: string, terms: RegExp[]) {
+  return terms.some((re) => re.test(sourcesText || ""));
+}
+
 function stripHebrewPrefix(token: string): string {
   const t = (token || "").trim();
   if (t.length < 4) return t;
@@ -67,48 +93,51 @@ function shortSnippet(text: string, max = 260): string {
 
 function buildFallbackConversationalAnswer(params: {
   question: string;
-  scope: ScopeMode;
   segments: AnswerSegment[];
-}): { answer: string; followUpQuestion?: string } {
-  const { question, scope, segments } = params;
+  confidence: "high" | "medium" | "low";
+  sources: AskSource[];
+}): AskResponse {
+  const { question, segments, confidence, sources } = params;
   if (!segments.length) {
     return {
-      answer:
+      bottomLine:
         "לא מצאתי כרגע מקור חוקי מספיק מדויק לשאלה הזו. אפשר לנסח שאלה ממוקדת יותר לפי תקנה/סעיף או לפי סוג מתקן.",
+      steps: [],
+      cautions: [],
+      requiredInfo: ["סוג מתקן", "מתח", "נקודת מדידה"],
       followUpQuestion:
         "כדי לדייק: מדובר במבנה מגורים, אתר רפואי, או מתקן תעשייתי?",
+      sources,
+      confidence: "low",
     };
   }
-
-  const scopeLabel =
-    scope === "law_only"
-      ? "חוק ותקנות בלבד"
-      : scope === "law_plus_utility"
-        ? "חוק/תקנות + הנחיות מעגל"
-        : "כל המקורות";
-
-  const points = segments.slice(0, 3).map((s) => {
-    const line = shortSnippet(s.text, 180);
-    return `- ${s.section}: ${line}`;
-  });
-
+  const steps = segments.slice(0, 4).map((s) => `${s.section}: ${shortSnippet(s.text, 180)}`);
   return {
-    answer:
-      `לפי המקורות שבדקתי (${scopeLabel}), זו התמונה לשאלה "${question}":\n\n` +
-      `${points.join("\n")}\n\n` +
-      "אם תרצה, אנסח לך עכשיו תשובה מעשית לפי תרחיש מדויק (סוג מבנה/מתח/סביבת התקנה).",
+    bottomLine: `לפי המקורות שבדקתי, זו התשובה לשאלה "${question}".`,
+    steps,
+    cautions: [
+      "לפני ביצוע עבודה בשטח יש לפעול לפי התקנות והנחיות הבטיחות המחייבות.",
+    ],
+    requiredInfo:
+      confidence === "low"
+        ? ["סוג מתקן", "מתח", "שיטת הארקה/הגנה", "ערך מדידה אם קיים"]
+        : undefined,
     followUpQuestion:
       "כדי לדייק לפעולה בשטח: מה סוג המתקן ומה המתח הרלוונטי?",
+    sources,
+    confidence,
   };
 }
 
 async function generateConversationalAnswer(params: {
   question: string;
   contextualQuestion: string;
-  scope: ScopeMode;
+  issueType?: string;
   history: AskHistoryItem[];
   segments: AnswerSegment[];
-}): Promise<{ answer: string; followUpQuestion?: string } | null> {
+  sources: AskSource[];
+  confidence: "high" | "medium" | "low";
+}): Promise<AskResponse | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
@@ -126,26 +155,15 @@ async function generateConversationalAnswer(params: {
     .map((h, idx) => `${idx + 1}. ${h.q}`)
     .join("\n");
 
-  const systemPrompt = [
-    "אתה עוזר מקצועי לחשמלאים בישראל.",
-    "ענה בעברית ברורה, אנושית, קצרה ומעשית.",
-    "הבסס אך ורק על המקורות שסופקו. אין להמציא תקנות או סעיפים.",
-    "אם חסר מידע עובדתי במקורות - אמור זאת מפורשות ובקש הבהרה ממוקדת.",
-    "סגנון: יועץ מקצועי, לא העתקה רובוטית.",
-    "מבנה תשובה:",
-    "1) כותרת קצרה: 'בשורה התחתונה'",
-    "2) 3-6 נקודות מעשיות",
-    "3) שורת 'מקורות עיקריים' עם 1-3 סעיפים/כותרות",
-    "4) אם צריך: 'שאלת הבהרה' אחת קצרה",
-  ].join("\n");
-
   const userPrompt = [
     `שאלה נוכחית: ${params.question}`,
     `שאלה קונטקסטואלית לחיפוש: ${params.contextualQuestion}`,
-    `מצב מיקוד: ${params.scope}`,
+    params.issueType ? `סוג תקלה: ${params.issueType}` : "",
     historyText ? `היסטוריית שיחה אחרונה:\n${historyText}` : "",
     `מקורות:\n${contextBlocks}`,
-    "תן תשובה מקצועית וקריאה. אל תצטט טקסט ארוך כמות שהוא.",
+    `מקורות להצמדה בתשובה: ${JSON.stringify(params.sources)}`,
+    `רמת ביטחון מומלצת לפי רטריבל: ${params.confidence}`,
+    "החזר רק JSON תקין לפי הסכמה.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -162,7 +180,7 @@ async function generateConversationalAnswer(params: {
         temperature: 0.2,
         max_tokens: 700,
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: SYSTEM_JSON },
           { role: "user", content: userPrompt },
         ],
       }),
@@ -172,14 +190,11 @@ async function generateConversationalAnswer(params: {
     const data = (await resp.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
-    const answer = data.choices?.[0]?.message?.content?.trim();
-    if (!answer) return null;
-
-    const followUpMatch = answer.match(/שאלת הבהרה[:：]\s*(.+)$/m);
-    return {
-      answer,
-      followUpQuestion: followUpMatch?.[1]?.trim(),
-    };
+    const modelText = data.choices?.[0]?.message?.content?.trim();
+    if (!modelText) return null;
+    const parsed = JSON.parse(modelText) as AskResponse;
+    if (!parsed || typeof parsed.bottomLine !== "string") return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -708,7 +723,7 @@ function buildContextualQuestion(question: string, history: AskHistoryItem[]): s
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<AskResponse | { error: string }>
+  res: NextApiResponse<AskResponse | AskDebugResponse | { error: string }>
 ) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -718,6 +733,7 @@ export default async function handler(
     question?: string;
     scope?: ScopeMode;
     history?: AskHistoryItem[];
+    issueType?: string;
   };
   const q = (question || "").trim();
   if (!q) {
@@ -764,7 +780,14 @@ export default async function handler(
     }
   }
 
-  const queryVariants = buildExpandedQueries(expandedQuery);
+  let retrievalQuery = expandedQuery;
+  const issueTypeRaw = String(req.body?.issueType || "").trim();
+  const isEarthingIssueType = /הארקה|לולאת תקלה/i.test(issueTypeRaw);
+  if (looksLikeEarthingOhmsQuestion(contextualQuestion) || (isEarthingIssueType && /אוהם|Ω|ohm|התנגדות/i.test(contextualQuestion))) {
+    retrievalQuery = `${expandedQuery} התנגדות אוהם Ω RA R_A Zs לולאת תקלה ערך מותר`;
+  }
+
+  const queryVariants = buildExpandedQueries(retrievalQuery);
   const collectedHits: Hit[] = [];
 
   for (const qv of queryVariants) {
@@ -796,14 +819,15 @@ export default async function handler(
 
   if (!hits || hits.length === 0) {
     return res.status(200).json({
-      mode: "online",
-      confidence: "low",
-      answer:
+      bottomLine:
         "לא מצאתי במאגר המקוון קטעים רלוונטיים מספיק. נסה ניסוח אחר או נוסיף מקורות נוספים.",
-      citations: [],
-      segments: [],
+      steps: [],
+      cautions: [],
+      requiredInfo: ["סוג מתקן", "מתח", "נקודת מדידה / ערך מדידה"],
       followUpQuestion:
         "כדי לדייק: על איזה סוג מתקן/סביבה אתה שואל (למשל אמבטיה, לוח, הארקה, אתר רפואי)?",
+      sources: [],
+      confidence: "low",
     });
   }
 
@@ -1054,14 +1078,15 @@ export default async function handler(
   // instead of unrelated legal text.
   if (rankedHits.length === 0 && isBathroomIntent && !isMedicalIntent) {
     return res.status(200).json({
-      mode: "online",
-      confidence: "low",
-      answer:
-        "לא מצאתי כרגע במאגר החוקי קטע ברור מספיק על 'אמבטיה' בהקשר שביקשת. כדי לא להטעות, אני צריך מיקוד קצר לפני שאחזיר הנחיה מעשית.",
-      citations: [],
-      segments: [],
+      bottomLine:
+        "לא מצאתי כרגע במאגר החוקי קטע ברור מספיק על 'אמבטיה' בהקשר שביקשת.",
+      steps: [],
+      cautions: ["כדי לא להטעות, נדרש מיקוד קצר לפני הנחיה מעשית."],
+      requiredInfo: ["סוג המתקן", "מה בדיוק נדרש: מרחק/שקע/הגנה"],
       followUpQuestion:
         "בחר הקשר: בית מגורים / אתר רפואי / מתקן אחר, ומה בדיוק נדרש: מרחק, סוג שקע, או דרישת הגנה.",
+      sources: [],
+      confidence: "low",
     });
   }
 
@@ -1094,14 +1119,15 @@ export default async function handler(
       rankedHits = legalHits;
     } else {
       return res.status(200).json({
-        mode: "online",
-        confidence: "low",
-        answer:
+        bottomLine:
           'לא מצאתי במאגר החוקי קטעים רלוונטיים מספיק לשאלה זו. נסה ניסוח ממוקד יותר (למשל: "מרחק מאמבטיה לפי תקנות") או עדכן מקורות חוק/תקנות נוספים.',
-        citations: [],
-        segments: [],
+        steps: [],
+        cautions: [],
+        requiredInfo: ["סוג המתקן", "מתח", "פרטי המקרה המדויקים"],
         followUpQuestion:
           "כדי למקד: באיזה הקשר מדובר — בית מגורים, אתר רפואי, או מתקן אחר?",
+        sources: [],
+        confidence: "low",
       });
     }
   }
@@ -1165,24 +1191,7 @@ export default async function handler(
       : h.source_url || undefined,
   }));
 
-  const llmResult = await generateConversationalAnswer({
-    question: q,
-    contextualQuestion,
-    scope: selectedScope,
-    history: safeHistory,
-    segments,
-  });
-
-  const fallback = buildFallbackConversationalAnswer({
-    question: q,
-    scope: selectedScope,
-    segments,
-  });
-
-  const answer = llmResult?.answer || fallback.answer;
-  const followUpQuestion = llmResult?.followUpQuestion || fallback.followUpQuestion;
-
-  const citations = top.map((h) => ({
+  const sources: AskSource[] = top.map((h) => ({
     title: isMaskedIndexSource({
       title: h.source_title,
       url: sourceUrls[h.source_title] || h.source_url || "",
@@ -1198,8 +1207,40 @@ export default async function handler(
     })
       ? PRIMARY_LAW_DISPLAY_URL
       : h.source_url || undefined,
-    locator: h.locator || undefined,
   }));
+
+  const allSourcesText = segments
+    .map((x) => `${x.title}\n${x.section}\n${x.text || ""}`)
+    .join("\n---\n");
+
+  if (looksLikeEarthingOhmsQuestion(q)) {
+    const ok = sourcesContainAny(allSourcesText, [
+      /אוהם|Ω|ohm/i,
+      /התנגדות/i,
+      /R_A|RA\b/i,
+      /Zs\b|לולאת תקלה/i,
+    ]);
+
+    if (!ok) {
+      return res.status(200).json({
+        bottomLine:
+          "אין לי במקורות שהוחזרו סעיף שמדבר על התנגדות הארקה באוהם, אז לא ניתן לקבוע תקינות מתוך המסמכים כרגע.",
+        steps: [],
+        cautions: [
+          "אל תסתמך על תשובה בלי סעיף/מקור מתאים. חשמל הוא תחום מסכן חיים.",
+        ],
+        requiredInfo: [
+          "מה בדיוק נמדד: התנגדות אלקטרודת הארקה (R_A) או לולאת תקלה (Zs) או רציפות PE",
+          "שיטת האיפוס (TT/TN) אם ידוע",
+          "איפה נמדד (לוח ראשי/תת-לוח/נקודת קצה) ובאיזה מכשיר/מצב בדיקה",
+        ],
+        followUpQuestion:
+          "מה בדיוק נמדד: R_A של האלקטרודה, Zs (לולאת תקלה), או רציפות מוליך PE? ואיפה מדדת?",
+        sources: [],
+        confidence: "low",
+      });
+    }
+  }
 
   const confidence =
     rankedHits[0].rank >= 1.2
@@ -1208,13 +1249,51 @@ export default async function handler(
         ? "medium"
         : "low";
 
-  return res.status(200).json({
-    mode: "online",
-    confidence,
-    answer,
-    citations,
+  const llmResult = await generateConversationalAnswer({
+    question: q,
+    contextualQuestion,
+    issueType: issueTypeRaw,
+    history: safeHistory,
     segments,
-    followUpQuestion,
+    sources,
+    confidence,
+  });
+
+  const fallback = buildFallbackConversationalAnswer({
+    question: q,
+    segments,
+    confidence,
+    sources,
+  });
+
+  const responsePayload: AskResponse = llmResult || fallback;
+  const DEBUG = process.env.DEBUG_RAG === "1";
+
+  if (DEBUG) {
+    return res.status(200).json({
+      ...responsePayload,
+      debug: {
+        retrievedTitles: sources.map((s) => ({
+          title: s.title,
+          section: s.section,
+        })),
+        retrievedSnippets: segments.map((s) => ({
+          title: s.title,
+          section: s.section,
+          snippet: (s.text || "").slice(0, 240),
+        })),
+      },
+    });
+  }
+
+  return res.status(200).json({
+    bottomLine: responsePayload.bottomLine,
+    steps: responsePayload.steps || [],
+    cautions: responsePayload.cautions || [],
+    requiredInfo: responsePayload.requiredInfo || undefined,
+    followUpQuestion: responsePayload.followUpQuestion || undefined,
+    sources: responsePayload.sources || [],
+    confidence: responsePayload.confidence || "low",
   });
 }
 

@@ -2,45 +2,31 @@
 
 import { useMemo, useState } from "react";
 import Layout from "../components/Layout";
-import ExpandableText from "../components/ExpandableText";
 import { db } from "../lib/db";
 import { offlineSearch } from "../lib/search";
 import { nanoid } from "../lib/utils";
-
-type Citation = {
-  title: string;
-  section: string;
-  url?: string;
-};
-
-type AnswerSegment = {
-  title: string;
-  section: string;
-  text: string;
-  url?: string;
-};
-
-type Answer = {
-  text: string;
-  citations: Citation[];
-  segments?: AnswerSegment[];
-  mode: "offline" | "online";
-  confidence?: "high" | "medium" | "low";
-  followUpQuestion?: string;
-};
+import type { AskResponse } from "../src/types/ask";
 
 type ScopeMode = "law_only" | "law_plus_utility" | "all";
 type ConversationItem = { q: string; createdAt?: string };
+const ISSUE_TYPES = [
+  "הארקה / לולאת תקלה",
+  "פחת (RCD)",
+  "קצר / מפסקים קופצים",
+  "חימום כבלים / עומס",
+  "לוח חשמל / זיהוי פאזה",
+];
 
 async function askOnline(
   question: string,
   scope: ScopeMode,
-  history: Array<{ q: string; createdAt?: string }>
+  history: Array<{ q: string; createdAt?: string }>,
+  issueType: string
 ) {
   const r = await fetch("/api/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, scope, history }),
+    body: JSON.stringify({ question, scope, history, issueType }),
   });
 
   if (!r.ok) {
@@ -48,23 +34,15 @@ async function askOnline(
     throw new Error(msg || "Online request failed");
   }
 
-  const data = (await r.json()) as {
-    answer: string;
-    mode: "online";
-    citations: Citation[];
-    segments?: AnswerSegment[];
-    confidence: "high" | "medium" | "low";
-    followUpQuestion?: string;
-  };
-
-  return data;
+  return (await r.json()) as AskResponse;
 }
 
 export default function HomePage() {
   const [q, setQ] = useState("");
-  const [a, setA] = useState<Answer | null>(null);
+  const [answer, setAnswer] = useState<AskResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [scope, setScope] = useState<ScopeMode>("law_only");
+  const [issueType, setIssueType] = useState(ISSUE_TYPES[0]);
   const [conversationHistory, setConversationHistory] = useState<
     ConversationItem[]
   >([]);
@@ -79,26 +57,18 @@ export default function HomePage() {
     if (!question) return;
 
     setBusy(true);
-    setA(null);
+    setAnswer(null);
 
     try {
       // Prefer online when available
       if (typeof window !== "undefined" && navigator.onLine) {
-        const data = await askOnline(question, scope, conversationHistory);
-
-        setA({
-          text: data.answer,
-          citations: data.citations || [],
-          segments: data.segments || [],
-          mode: "online",
-          confidence: data.confidence,
-          followUpQuestion: data.followUpQuestion,
-        });
+        const data = await askOnline(question, scope, conversationHistory, issueType);
+        setAnswer(data);
 
         await db.history.add({
           id: nanoid(),
           q: question,
-          a: data.answer,
+          a: data.bottomLine,
           createdAt: new Date().toISOString(),
           mode: "online",
         });
@@ -115,25 +85,22 @@ export default function HomePage() {
       const hits = await offlineSearch(question, 4);
 
       if (hits.length === 0) {
-        setA({
-          text:
-            "לא מצאתי במאגר המקומי מקור מספיק לשאלה הזו. כשיהיה חיבור, אנסה לתת תשובה מלאה עם ציטוטים ממקורות רשמיים.",
-          citations: [],
-          segments: [],
-          mode: "offline",
+        setAnswer({
+          bottomLine:
+            "לא מצאתי במאגר המקומי מקור מספיק לשאלה הזו. כשיהיה חיבור, אנסה לתת תשובה מלאה ממקורות רשמיים.",
+          steps: [],
+          cautions: [],
+          requiredInfo: ["נסח שאלה מדויקת יותר או התחבר לאינטרנט."],
+          sources: [],
           confidence: "low",
         });
       } else {
-        setA({
-          text:
-            "מצאתי מידע רלוונטי במאגר האוף־ליין. זו תשובה התחלתית (דמו). בשלב הבא נחבר מקורות רשמיים מלאים ו־RAG אמיתי.",
-          citations: hits.map((h) => ({ title: h.title, section: h.section })),
-          segments: hits.map((h) => ({
-            title: h.title,
-            section: h.section,
-            text: h.text,
-          })),
-          mode: "offline",
+        setAnswer({
+          bottomLine:
+            "מצאתי מידע רלוונטי במאגר האוף־ליין. זו תשובה התחלתית בלבד.",
+          steps: hits.slice(0, 3).map((h) => h.text.slice(0, 220)),
+          cautions: ["זוהי תשובת אוף־ליין. אמת מול מקורות רשמיים לפני ביצוע עבודה."],
+          sources: hits.map((h) => ({ title: h.title, section: h.section })),
           confidence: "medium",
         });
       }
@@ -182,10 +149,22 @@ export default function HomePage() {
             <option value="law_plus_utility">מיקוד: חוק + המעגל</option>
             <option value="all">מיקוד: כל המקורות</option>
           </select>
+          <select
+            className="input"
+            style={{ width: 220, maxWidth: "100%" }}
+            value={issueType}
+            onChange={(e) => setIssueType(e.target.value)}
+          >
+            {ISSUE_TYPES.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </select>
 
           <span className="badge">{online ? "Online" : "Offline"}</span>
-          {a?.confidence && (
-            <span className="badge">ביטחון: {a.confidence}</span>
+          {answer?.confidence && (
+            <span className="badge">ביטחון: {answer.confidence}</span>
           )}
           <button
             className="btn"
@@ -207,45 +186,73 @@ export default function HomePage() {
           </div>
         )}
 
-        {a && (
+        {answer && (
           <>
             <hr />
-            <div className="h2">תשובה ({a.mode})</div>
-            <div style={{ marginBottom: 12 }}>
-              <ExpandableText text={a.text || ""} maxChars={700} />
-            </div>
-            {a.segments && a.segments.length > 0 ? (
-              <div>
-                <div className="h2" style={{ marginBottom: 10 }}>
-                  על בסיס מקורות
-                </div>
-                {a.segments.map((seg, idx) => (
-                  <div key={`${seg.title}-${seg.section}-${idx}`} style={{ marginBottom: 14 }}>
-                    <div className="small" style={{ marginBottom: 6 }}>
-                      • {seg.section} — {seg.title}
-                    </div>
-                    <ExpandableText text={seg.text} maxChars={320} />
+            <div className="h2">תשובה</div>
+            <div className="space-y-3" style={{ marginBottom: 12 }}>
+              <div className="h2" style={{ fontSize: 20 }}>
+                {answer.bottomLine}
+              </div>
+
+              {answer.steps?.length > 0 && (
+                <div>
+                  <div className="small" style={{ fontWeight: 700 }}>
+                    צעדים:
                   </div>
-                ))}
-              </div>
-            ) : null}
+                  <ol style={{ margin: 0, paddingInlineStart: 20 }}>
+                    {answer.steps.map((s, i) => (
+                      <li key={i}>{s}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
 
-            {a.followUpQuestion ? (
+              {answer.cautions?.length > 0 && (
+                <div>
+                  <div className="small" style={{ fontWeight: 700 }}>
+                    זהירות:
+                  </div>
+                  <ul style={{ margin: 0, paddingInlineStart: 20 }}>
+                    {answer.cautions.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {answer.requiredInfo?.length ? (
+                <div>
+                  <div className="small" style={{ fontWeight: 700 }}>
+                    חסר מידע כדי לקבוע:
+                  </div>
+                  <ul style={{ margin: 0, paddingInlineStart: 20 }}>
+                    {answer.requiredInfo.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+
+            {answer.followUpQuestion ? (
               <div className="card" style={{ marginTop: 10, padding: 12 }}>
-                <div className="small">שאלת הבהרה מוצעת:</div>
-                <div style={{ marginTop: 4 }}>{a.followUpQuestion}</div>
+                <div className="small" style={{ fontWeight: 700 }}>
+                  שאלת המשך:
+                </div>
+                <div style={{ marginTop: 4 }}>{answer.followUpQuestion}</div>
               </div>
             ) : null}
 
-            {a.citations.length > 0 && (
+            {answer.sources.length > 0 && (
               <>
                 <hr />
-                <div className="h2">ציטוטים</div>
+                <div className="h2">מקורות</div>
                 <ul
                   className="small"
                   style={{ margin: 0, paddingInlineStart: 18 }}
                 >
-                  {a.citations.map((c, i) => (
+                  {answer.sources.map((c, i) => (
                     <li key={i}>
                       {c.title} — {c.section}
                       {c.url ? (
@@ -262,6 +269,9 @@ export default function HomePage() {
                 </ul>
               </>
             )}
+            <div className="small" style={{ marginTop: 8, opacity: 0.8 }}>
+              Confidence: {answer.confidence}
+            </div>
           </>
         )}
       </div>
