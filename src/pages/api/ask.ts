@@ -321,6 +321,32 @@ function handleShortCommand(
 ): Answer | null {
   if (!cmd || !state.topic) return null;
 
+  // Use lastUserQuestion to understand context for "explain" command
+  const baseForIntent = (state.lastUserQuestion || "").trim();
+  
+  // If "explain" and last question was about bathroom, explain bathroom not topic
+  if (cmd === "explain" && baseForIntent) {
+    if (/(אמבט|אמבטיה|מקלח|מקלחת|חדר רחצה|רטוב|אזור\s*[012]|אזורים)/i.test(baseForIntent)) {
+      return {
+        kind: "flow",
+        title: "הסבר — אזורים בחדר רחצה",
+        bottomLine:
+          "בחדר רחצה יש חלוקה לאזורים (0/1/2) לפי מידת חשיפה למים, וכל אזור מגביל איזה ציוד/מתקנים מותר להתקין ואיזה סוג הגנה נדרש.",
+        steps: [
+          "אזור 0: בתוך האמבט/מגש המקלחת (החשיפה למים הכי גבוהה).",
+          "אזור 1: מעל אזור 0 ובתחום המקלחת/אמבט סביב נקודות התזה.",
+          "אזור 2: סביב אזור 1 — החשיפה נמוכה יותר, אבל עדיין אזור רטוב.",
+          "כדי לתת תשובה תקנית ומדויקת צריך לדעת: האם זה אמבטיה או מקלחון, ומה אתה רוצה להתקין (שקע/תאורה/דוד/מפוח).",
+        ],
+        requiredInfo: [],
+        followUpQuestion: "מה אתה מתקין ובאיזה אזור (0/1/2)?",
+        cautions: ["לפני עבודה בשטח—פועלים לפי תקנות/תקנים ונהלי בטיחות."],
+        sources: [],
+        confidence: "high",
+      };
+    }
+  }
+
   if (state.topic === "loop_fault") {
     if (cmd === "calc") {
       // Start slot filling for Zs calculation
@@ -488,6 +514,7 @@ function normalizeChatState(raw: any): ChatState {
     slots: raw.slots && typeof raw.slots === "object" ? raw.slots : {},
     pendingQuestion: typeof raw.pendingQuestion === "string" ? raw.pendingQuestion : undefined,
     lastSummary: typeof raw.lastSummary === "string" ? raw.lastSummary : undefined,
+    lastUserQuestion: typeof raw.lastUserQuestion === "string" ? raw.lastUserQuestion : undefined,
   };
 }
 
@@ -504,6 +531,8 @@ function topicFromIssueType(issueType?: string): ChatTopic | null {
 
 function detectChatTopic(question: string, current: ChatTopic | undefined): ChatTopic {
   const q = normalizeHebrewText(question || "");
+  // NEW: bathroom first - don't let dropdown override user's actual question
+  if (/(אמבט|אמבטיה|מקלח|מקלחת|חדר רחצה|רטוב|אזור\s*[012]|אזורים)/i.test(q)) return "general";
   if (/(לולאת תקלה|\bzs\b|fault loop)/i.test(q)) return "loop_fault";
   if (/(הארקה|ra|r_a|אלקטרודה|השוואת פוטנציאלים)/i.test(q)) return "earthing";
   if (/(פחת|rcd|fid|ממסר)/i.test(q)) return "rcd";
@@ -589,6 +618,10 @@ Return ONLY valid JSON in this exact schema:
 Rules:
 - No markdown.
 - No extra keys.
+- Start with a direct practical answer (1-2 lines).
+- Do NOT paste raw excerpts from sources; paraphrase them into a clear, professional answer.
+- Only include sources as citations list; keep them short.
+- Ask at most ONE follow-up question, and only if necessary (when confidence is low).
 - If you are missing critical info to decide, set confidence="low", fill requiredInfo and followUpQuestion.
 - If safety-related, add cautions.
 - If the user asks "is X ohms OK", you MUST ask what measurement it is (RA vs Zs vs PE continuity) and the earthing system (TT/TN), unless sources explicitly define it.
@@ -719,8 +752,9 @@ function buildFallbackConversationalAnswer(params: {
   segments: AnswerSegment[];
   confidence: "high" | "medium" | "low";
   sources: SourceRef[];
+  domainIntent?: DomainIntent;
 }): Answer {
-  const { question, segments, confidence, sources } = params;
+  const { question, segments, confidence, sources, domainIntent = "general" } = params;
   if (!segments.length) {
     return {
       kind: "rag",
@@ -736,21 +770,48 @@ function buildFallbackConversationalAnswer(params: {
       confidence: "low",
     };
   }
-  const steps = segments.slice(0, 4).map((s) => `${s.section}: ${shortSnippet(s.text, 180)}`);
+  const steps = segments.slice(0, 4).map((s) => `מבוסס על: ${s.title} — ${s.section}`);
+  
+  // Build smart follow-up question based on domain intent (only if confidence is low)
+  let followUpQuestion: string | undefined = undefined;
+  if (confidence === "low") {
+    switch (domainIntent) {
+      case "bathroom":
+        followUpQuestion =
+          "כדי לדייק (אופציונלי): איזה אזור בחדר רחצה (0/1/2) ומה בדיוק רוצים להתקין (שקע/דוד/תאורה)?";
+        break;
+      case "rcd":
+        followUpQuestion =
+          "כדי לדייק (אופציונלי): הפחת נופל מיד או אחרי זמן? בכל הבית או רק במעגל אחד?";
+        break;
+      case "panels":
+        followUpQuestion =
+          'כדי לדייק (אופציונלי): על איזה רכיב בלוח מדובר (מאמ"ת/מפסק ראשי/פחת) ומה הזרם הנקוב?';
+        break;
+      case "grounding":
+        followUpQuestion =
+          "כדי לדייק (אופציונלי): מה נמדד (RA/Zs/PE) ומה שיטת האיפוס (TT/TN)?";
+        break;
+      case "metering":
+        followUpQuestion =
+          "כדי לדייק (אופציונלי): מה סוג המתקן (דירה/משרד/תעשייה) ומה המתח (230/400)?";
+        break;
+      default:
+        followUpQuestion =
+          "כדי לדייק (אופציונלי): תן עוד פרט אחד—איפה זה (דירת מגורים/תעשייה/אתר רפואי) ומה בדיוק אתה בודק/מתכנן?";
+    }
+  }
+
   return {
     kind: "rag",
     title: "חוק ותקנות",
-    bottomLine: `לפי המקורות שבדקתי, זו התשובה לשאלה "${question}".`,
+    bottomLine: `מצאתי סעיפים רלוונטיים בתקנות/חוק. הנה תשובה ראשונית לשאלה: "${question}".`,
     steps,
     cautions: [
       "לפני ביצוע עבודה בשטח יש לפעול לפי התקנות והנחיות הבטיחות המחייבות.",
     ],
-    requiredInfo:
-      confidence === "low"
-        ? ["סוג מתקן", "מתח", "שיטת הארקה/הגנה", "ערך מדידה אם קיים"]
-        : undefined,
-    followUpQuestion:
-      "כדי לדייק לפעולה בשטח: מה סוג המתקן ומה המתח הרלוונטי?",
+    requiredInfo: undefined, // Don't block with requiredInfo - make it optional
+    followUpQuestion,
     sources,
     confidence,
   };
@@ -1411,16 +1472,27 @@ export default async function handler(
   const issueTypeRaw = String(req.body?.issueType || "").trim();
   const incomingState = normalizeChatState(req.body?.chatState);
   const topicByIssueType = topicFromIssueType(issueTypeRaw);
-  const activeTopic = detectChatTopic(q, topicByIssueType || incomingState.topic);
+  
+  // ===== COMMAND HANDLER: Short words like "חישוב", "מקור", "הסבר" =====
+  const shortCmd = detectShortCommand(q);
+  
+  // If it's a command, don't change topic - use last topic from actual question
+  const isCommandMessage = !!shortCmd;
+  const activeTopic = isCommandMessage
+    ? (incomingState.topic || topicByIssueType || "general") // Keep last topic for commands
+    : detectChatTopic(q, topicByIssueType || incomingState.topic); // Detect topic from actual question
+  
   const hasActiveTopic = !!activeTopic && activeTopic !== "general";
   const baseChatState: ChatState = {
     ...incomingState,
     topic: activeTopic,
     stage: incomingState.stage || "collecting",
   };
-
-  // ===== COMMAND HANDLER: Short words like "חישוב", "מקור", "הסבר" =====
-  const shortCmd = detectShortCommand(q);
+  
+  // Save last user question if it's not a command (for context in commands)
+  if (!shortCmd) {
+    baseChatState.lastUserQuestion = q;
+  }
   if (shortCmd && hasActiveTopic && !baseChatState.pendingSlot) {
     const cmdAnswer = handleShortCommand(shortCmd, baseChatState, q);
     if (cmdAnswer) {
@@ -1476,20 +1548,6 @@ export default async function handler(
             chatState: baseChatState,
           });
         }
-      }
-    }
-  }
-
-  // ===== If no pending slot, check if we need to start slot filling for earthing =====
-  if (baseChatState.topic === "earthing" && !baseChatState.pendingSlot) {
-    const earthingValueIntent = isEarthingValueQuestion(q);
-    if (earthingValueIntent) {
-      const nextQ = nextEarthingQuestion(baseChatState);
-      if (nextQ) {
-        return res.status(200).json({
-          ...nextQ,
-          chatState: baseChatState,
-        });
       }
     }
   }
@@ -1593,17 +1651,8 @@ export default async function handler(
   // Hard flow gate for "earthing value" questions:
   // avoid guessing from generic legal chunks when RA/Zs/PE context is missing.
   // NOTE: This is now handled by slot-filling above, but keeping as fallback for non-slot paths
-  if (earthingValueIntent && !hasEarthingMeasurementInfo({ question: contextualQuestion, flow }) && !baseChatState.pendingSlot) {
-    if (baseChatState.topic === "earthing") {
-      const nextQ = nextEarthingQuestion(baseChatState);
-      if (nextQ) {
-        return res.status(200).json({
-          ...nextQ,
-          chatState: baseChatState,
-        });
-      }
-    }
-  }
+  // Flow should only activate AFTER RAG, not before
+  // Removed early Flow gate - always try RAG first
 
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -2134,92 +2183,22 @@ export default async function handler(
     .map((h) => normalizeHebrewText(h.text || ""))
     .join("\n");
 
-  if (looksLikeEarthingOhmsQuestion(q)) {
-    const ok = sourcesContainAny(allSourcesText, [
-      /אוהם|Ω|ohm/i,
-      /התנגדות/i,
-      /R_A|RA\b/i,
-      /Zs\b|לולאת תקלה/i,
-    ]);
+  // Check if we should offer optional focus (not blocking, just offering)
+  const shouldOfferFocus =
+    (earthingValueIntent && !earthingTermEvidenceExists(allSourcesEvidenceText)) ||
+    (loopFaultIntent && !loopFaultEvidenceExists(allSourcesEvidenceText)) ||
+    (looksLikeEarthingOhmsQuestion(q) &&
+      !sourcesContainAny(allSourcesText, [
+        /אוהם|Ω|ohm/i,
+        /התנגדות/i,
+        /R_A|RA\b/i,
+        /Zs\b|לולאת תקלה/i,
+      ]));
 
-    if (!ok) {
-      return res.status(200).json({
-        kind: "rag",
-        title: "חוק ותקנות",
-        bottomLine:
-          "אין לי במקורות שהוחזרו סעיף שמדבר על התנגדות הארקה באוהם, אז לא ניתן לקבוע תקינות מתוך המסמכים כרגע.",
-        steps: [],
-        cautions: [
-          "אל תסתמך על תשובה בלי סעיף/מקור מתאים. חשמל הוא תחום מסכן חיים.",
-        ],
-        requiredInfo: [
-          "מה בדיוק נמדד: התנגדות אלקטרודת הארקה (R_A) או לולאת תקלה (Zs) או רציפות PE",
-          "שיטת האיפוס (TT/TN) אם ידוע",
-          "איפה נמדד (לוח ראשי/תת-לוח/נקודת קצה) ובאיזה מכשיר/מצב בדיקה",
-        ],
-        followUpQuestion:
-          "מה בדיוק נמדד: R_A של האלקטרודה, Zs (לולאת תקלה), או רציפות מוליך PE? ואיפה מדדת?",
-        sources: [],
-        confidence: "low",
-        chatState: {
-          ...baseChatState,
-          topic: "earthing",
-          stage: "collecting",
-        },
-      });
-    }
-  }
+  // If we should offer focus, we'll set a flag but still continue to RAG
+  // The focus question will be added at the end if confidence is low
 
-  if (earthingValueIntent && !earthingTermEvidenceExists(allSourcesEvidenceText)) {
-    return res.status(200).json({
-      kind: "flow",
-      title: "הארקה / לולאת תקלה",
-      bottomLine:
-        "במקורות שנשלפו לא נמצאו מונחים טכניים מספיקים (RA/Zs/Ω), לכן אי אפשר לקבוע ערך תקין כרגע.",
-      steps: [],
-      cautions: ["כדי לא להטעות, לא ניתן לתת ערך תקינות בלי מקור רלוונטי מפורש."],
-      requiredInfo: [
-        "מה נמדד: RA / Zs / רציפות PE",
-        "שיטת איפוס: TT / TN",
-        "נתון פחת (IΔn) אם קיים",
-      ],
-      followUpQuestion:
-        "מה נמדד בפועל (RA/Zs/PE), ומה שיטת האיפוס (TT/TN)?",
-      sources: [],
-      confidence: "low",
-      chatState: {
-        ...baseChatState,
-        topic: "earthing",
-        stage: "collecting",
-      },
-    });
-  }
-
-  if (loopFaultIntent && !loopFaultEvidenceExists(allSourcesEvidenceText)) {
-    return res.status(200).json({
-      kind: "rag",
-      title: "לולאת תקלה (Zs)",
-      bottomLine:
-        "לא הצלחתי לשלוף מהמאגר סעיף שמדבר על לולאת תקלה (Zs), לכן אני לא נותן תשובה מבוססת תקנות כרגע.",
-      steps: [],
-      cautions: ["אל תסתמך על תשובה ללא סעיף מתאים. עבודה בחשמל מסכנת חיים."],
-      requiredInfo: [
-        "סוג רשת (TT/TN)",
-        'סוג ההגנה (מאמ"ת B/C/D או נתיך + זרם נקוב)',
-        "מתח רשת (230/400)",
-        "האם נדרשת הגדרה או חישוב Zs מקסימלי",
-      ],
-      followUpQuestion:
-        "אתה רוצה הגדרה של Zs או חישוב Zs מקסימלי? ואם חישוב — מה סוג ההגנה והזרם הנקוב?",
-      sources: [],
-      confidence: "low",
-      chatState: {
-        ...baseChatState,
-        topic: "loop_fault",
-        stage: "collecting",
-      },
-    });
-  }
+  // Don't return early - continue to RAG and LLM, then add optional focus question if needed
 
   let confidence: "high" | "medium" | "low" =
     rankedHits[0].rank >= 1.2
@@ -2238,6 +2217,18 @@ export default async function handler(
     confidence = "low";
   }
 
+  // Check if we have good evidence - if yes, don't activate Flow, just return answer
+  // Flow should only activate for critical/safety questions when we truly lack evidence
+  const hasGoodEvidence =
+    tokenOverlapScore(contextualQuestion, allSourcesEvidenceText) >= 0.25 &&
+    noiseScore(allSourcesEvidenceText) < 2 &&
+    confidence !== "low";
+
+  // If we have good evidence, skip Flow activation even for critical questions
+  // Flow is only for "expert mode" when we truly need more info to avoid misleading
+  const isCriticalQuestion = earthingValueIntent || loopFaultIntent;
+  const shouldSkipFlow = hasGoodEvidence || confidence === "high" || confidence === "medium";
+
   const llmResult = await generateConversationalAnswer({
     question: q,
     contextualQuestion,
@@ -2253,14 +2244,33 @@ export default async function handler(
     segments,
     confidence,
     sources,
+    domainIntent,
   });
 
   const basePayload = llmResult || fallback;
-  const responsePayload: Answer = {
+  let responsePayload: Answer = {
     ...basePayload,
     kind: basePayload.kind || "rag",
     title: basePayload.title || "חוק ותקנות",
   };
+
+  // If we should offer optional focus (earthing/loop fault without evidence), add it
+  if (shouldOfferFocus && confidence === "low") {
+    // Override followUpQuestion with optional focus question
+    responsePayload = {
+      ...responsePayload,
+      bottomLine:
+        responsePayload.bottomLine +
+        " מצאתי מקורות רלוונטיים במאגר, אבל לא נשלף סעיף שמאפשר לקבוע ערך/קריטריון חד-משמעי (למשל RA/Zs/Ω או כלל מספרי). לכן אני נותן תשובה ראשונית ומציע מיקוד אופציונלי כדי לדייק.",
+      followUpQuestion: earthingValueIntent
+        ? "מיקוד אופציונלי: מה נמדד בפועל — RA / Zs / רציפות PE, והאם זה TT או TN?"
+        : loopFaultIntent
+          ? "מיקוד אופציונלי: זה TT או TN? מה ההגנה (למשל C16/נתיך 16) ומה המתח 230/400?"
+          : "מיקוד אופציונלי: תן פרט אחד נוסף על ההקשר (דירה/תעשייה/רפואי) ומה בדיוק רוצים לקבוע.",
+      requiredInfo: undefined, // Don't block - make it optional
+    };
+  }
+
   const DEBUG = process.env.DEBUG_RAG === "1";
 
   if (DEBUG) {
@@ -2301,6 +2311,7 @@ export default async function handler(
       stage: responsePayload.followUpQuestion ? "collecting" : "answering",
       pendingQuestion: responsePayload.followUpQuestion || undefined,
       lastSummary: responsePayload.bottomLine,
+      lastUserQuestion: baseChatState.lastUserQuestion, // Preserve last actual question for commands
     },
   });
 }

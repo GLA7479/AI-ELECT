@@ -30,6 +30,7 @@ export type ChatState = {
   };
   pendingQuestion?: string;
   lastSummary?: string;
+  lastUserQuestion?: string; // Last actual question (not command) to maintain context
 };
 
 export type ChatMessage = {

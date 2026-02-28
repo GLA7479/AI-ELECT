@@ -45,9 +45,28 @@ function inferLocalPdfMeta(filePath) {
     lower.includes("pics_minhal_hashmal") ||
     lower.includes("files_minhal_hashmal")
   ) {
+    // Boost priority for earthing/grounding related files
+    if (
+      lower.includes("adama") ||
+      lower.includes("הארק") ||
+      lower.includes("earthing") ||
+      lower.includes("grounding") ||
+      lower.includes("14")
+    ) {
+      return { publisher: "minhal-hashmal", doc_type: "regulation_pdf" };
+    }
     return { publisher: "minhal-hashmal", doc_type: "regulation_pdf" };
   }
   if (lower.includes("licensure")) {
+    return { publisher: "minhal-hashmal", doc_type: "regulation_pdf" };
+  }
+  // Check for earthing-related keywords in any PDF
+  if (
+    lower.includes("הארק") ||
+    lower.includes("adama") ||
+    lower.includes("earthing") ||
+    lower.includes("grounding")
+  ) {
     return { publisher: "minhal-hashmal", doc_type: "regulation_pdf" };
   }
   return { publisher: "official_local_pdf", doc_type: "regulation_pdf" };
