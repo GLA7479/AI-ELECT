@@ -24,6 +24,69 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 const INGEST_VISITED_URLS = new Set();
 
+function walkFilesRecursive(dirPath) {
+  const out = [];
+  const items = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const it of items) {
+    const p = path.join(dirPath, it.name);
+    if (it.isDirectory()) out.push(...walkFilesRecursive(p));
+    else out.push(p);
+  }
+  return out;
+}
+
+function inferLocalPdfMeta(filePath) {
+  const lower = path.basename(filePath).toLowerCase();
+  if (lower.includes("חוק-החשמל") || lower.includes("law")) {
+    return { publisher: "official_local_pdf", doc_type: "law_pdf" };
+  }
+  if (
+    lower.includes("minhal_hashmal") ||
+    lower.includes("pics_minhal_hashmal") ||
+    lower.includes("files_minhal_hashmal")
+  ) {
+    return { publisher: "minhal-hashmal", doc_type: "regulation_pdf" };
+  }
+  if (lower.includes("licensure")) {
+    return { publisher: "minhal-hashmal", doc_type: "regulation_pdf" };
+  }
+  return { publisher: "official_local_pdf", doc_type: "regulation_pdf" };
+}
+
+function buildSourcesFromLocalPdfDir(pdfDir) {
+  const absDir = path.isAbsolute(pdfDir)
+    ? pdfDir
+    : path.join(process.cwd(), pdfDir);
+  if (!fs.existsSync(absDir)) {
+    throw new Error(`PDF_DIR not found: ${absDir}`);
+  }
+
+  const files = walkFilesRecursive(absDir).filter((f) =>
+    f.toLowerCase().endsWith(".pdf")
+  );
+  const cwd = process.cwd();
+  const seen = new Set();
+  const sources = [];
+
+  for (const file of files) {
+    const rel = path.relative(cwd, file).replace(/\\/g, "/");
+    const fileUrl = `file:${rel}`;
+    if (seen.has(fileUrl)) continue;
+    seen.add(fileUrl);
+
+    const base = path.basename(file, path.extname(file));
+    const meta = inferLocalPdfMeta(file);
+    sources.push({
+      title: base,
+      url: fileUrl,
+      publisher: meta.publisher,
+      doc_type: meta.doc_type,
+    });
+  }
+
+  return sources;
+}
+
 function sha256(s) {
   return crypto.createHash("sha256").update(s).digest("hex");
 }
@@ -846,10 +909,19 @@ async function ingestOne(src) {
 }
 
 async function main() {
-  const sourcesPath = process.env.SOURCES_FILE
-    ? path.join(process.cwd(), process.env.SOURCES_FILE)
-    : path.join(process.cwd(), "scripts", "sources.json");
-  const sources = JSON.parse(fs.readFileSync(sourcesPath, "utf8"));
+  const pdfDir = process.env.PDF_DIR;
+  let sources = [];
+  if (pdfDir) {
+    sources = buildSourcesFromLocalPdfDir(pdfDir);
+    console.log(`[ingest] PDF_DIR mode: ${pdfDir}`);
+    console.log(`[ingest] Found ${sources.length} local PDF files.`);
+  } else {
+    const sourcesPath = process.env.SOURCES_FILE
+      ? path.join(process.cwd(), process.env.SOURCES_FILE)
+      : path.join(process.cwd(), "scripts", "sources.json");
+    sources = JSON.parse(fs.readFileSync(sourcesPath, "utf8"));
+    console.log(`[ingest] SOURCES_FILE mode: ${sourcesPath}`);
+  }
 
   // Run sequentially to avoid overwhelming servers and Playwright browser instances
   for (const src of sources) {

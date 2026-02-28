@@ -9,6 +9,7 @@
     "lint": "eslint",
     "run": "start \"\" http://localhost:3000 && next dev",
     "ingest": "node scripts/ingest.js",
+    "ingest:elect-rool": "node scripts/ingest.js",
     "crawl:hamaagal": "node scripts/crawl_hamaagal.js"
   },
   "dependencies": {
@@ -21,7 +22,7 @@
     "next": "16.1.6",
     "next-pwa": "^5.6.0",
     "p-limit": "^7.3.0",
-    "pdf-parse": "^1.1.1",
+    "pdf-parse": "^1.1.4",
     "playwright": "^1.58.2",
     "react": "19.2.3",
     "react-dom": "19.2.3"
