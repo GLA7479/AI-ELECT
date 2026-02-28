@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 import { normalizeHebrewText } from "../../../lib/normalizeHebrewText";
-import type { AskResponse, AskSource } from "../../types/ask";
+import type { Answer, SourceRef } from "../../types/answer";
+import { runEngine } from "../../lib/engine";
 
 type AnswerSegment = {
   title: string;
@@ -22,7 +23,7 @@ type AskDebugPayload = {
   retrievedSnippets: Array<{ title: string; section: string; snippet: string }>;
 };
 
-type AskDebugResponse = AskResponse & {
+type AskDebugResponse = Answer & {
   debug: AskDebugPayload;
 };
 
@@ -32,6 +33,8 @@ Answer ONLY from the provided sources. If sources are insufficient, say so and a
 Return ONLY valid JSON in this exact schema:
 
 {
+  "kind": "rag",
+  "title": string,
   "bottomLine": string,
   "steps": string[],
   "cautions": string[],
@@ -95,11 +98,13 @@ function buildFallbackConversationalAnswer(params: {
   question: string;
   segments: AnswerSegment[];
   confidence: "high" | "medium" | "low";
-  sources: AskSource[];
-}): AskResponse {
+  sources: SourceRef[];
+}): Answer {
   const { question, segments, confidence, sources } = params;
   if (!segments.length) {
     return {
+      kind: "rag",
+      title: "חוק ותקנות",
       bottomLine:
         "לא מצאתי כרגע מקור חוקי מספיק מדויק לשאלה הזו. אפשר לנסח שאלה ממוקדת יותר לפי תקנה/סעיף או לפי סוג מתקן.",
       steps: [],
@@ -113,6 +118,8 @@ function buildFallbackConversationalAnswer(params: {
   }
   const steps = segments.slice(0, 4).map((s) => `${s.section}: ${shortSnippet(s.text, 180)}`);
   return {
+    kind: "rag",
+    title: "חוק ותקנות",
     bottomLine: `לפי המקורות שבדקתי, זו התשובה לשאלה "${question}".`,
     steps,
     cautions: [
@@ -135,9 +142,9 @@ async function generateConversationalAnswer(params: {
   issueType?: string;
   history: AskHistoryItem[];
   segments: AnswerSegment[];
-  sources: AskSource[];
+  sources: SourceRef[];
   confidence: "high" | "medium" | "low";
-}): Promise<AskResponse | null> {
+}): Promise<Answer | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
@@ -192,7 +199,7 @@ async function generateConversationalAnswer(params: {
     };
     const modelText = data.choices?.[0]?.message?.content?.trim();
     if (!modelText) return null;
-    const parsed = JSON.parse(modelText) as AskResponse;
+    const parsed = JSON.parse(modelText) as Answer;
     if (!parsed || typeof parsed.bottomLine !== "string") return null;
     return parsed;
   } catch {
@@ -219,6 +226,20 @@ type SourceMeta = {
 
 const PRIMARY_LAW_DISPLAY_TITLE = "חוק החשמל — מקור חוקי";
 const PRIMARY_LAW_DISPLAY_URL = "https://fs.knesset.gov.il/2/law/2_lsr_208393.PDF";
+const ELECTRIC_LAW_HINTS = [
+  "חוק החשמל",
+  "תקנות החשמל",
+  "מינהל החשמל",
+  "רשיונות חשמל",
+  "רישוי חשמל",
+  "הארקות יסוד",
+  "מתקני חשמל",
+  "בודק חשמל",
+  "חשמלאי",
+  'ת"י 019',
+  'ת"י 60364',
+  "iec 60364",
+];
 
 function isPrimaryLocalLawSource(source: {
   title?: string | null;
@@ -251,6 +272,14 @@ function isGovernmentLawSource(source: {
     url.includes("knesset.gov.il") ||
     url.includes("gov.il") ||
     url.includes("nevo.co.il")
+  );
+}
+
+function isElectricLawish(title: string, url: string) {
+  const t = (title || "").toLowerCase();
+  const u = (url || "").toLowerCase();
+  return ELECTRIC_LAW_HINTS.some(
+    (k) => t.includes(k.toLowerCase()) || u.includes(k.toLowerCase())
   );
 }
 
@@ -723,21 +752,37 @@ function buildContextualQuestion(question: string, history: AskHistoryItem[]): s
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<AskResponse | AskDebugResponse | { error: string }>
+  res: NextApiResponse<Answer | AskDebugResponse | { error: string }>
 ) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { question, scope, history } = req.body as {
+  const { question, scope, history, modeHint = "auto", calc, flow } = req.body as {
     question?: string;
     scope?: ScopeMode;
     history?: AskHistoryItem[];
     issueType?: string;
+    modeHint?: "auto" | "calc" | "flow" | "rag";
+    calc?: any;
+    flow?: any;
   };
+  // Debug incoming payload to diagnose UI-side wrong question forwarding.
+  // eslint-disable-next-line no-console
+  console.log("[ASK payload]", JSON.stringify(req.body, null, 2));
   const q = (question || "").trim();
   if (!q) {
     return res.status(400).json({ error: "Missing question" });
+  }
+
+  const engine = runEngine({
+    question: q,
+    modeHint,
+    calc,
+    flow,
+  });
+  if (engine.answer) {
+    return res.status(200).json(engine.answer);
   }
   const normalizedQuestion = sanitizeUserQuestion(q);
   const selectedScope: ScopeMode = scope || "law_only";
@@ -819,6 +864,8 @@ export default async function handler(
 
   if (!hits || hits.length === 0) {
     return res.status(200).json({
+      kind: "rag",
+      title: "חוק ותקנות",
       bottomLine:
         "לא מצאתי במאגר המקוון קטעים רלוונטיים מספיק. נסה ניסוח אחר או נוסיף מקורות נוספים.",
       steps: [],
@@ -868,6 +915,7 @@ export default async function handler(
     const docType = (sourceDocTypes[h.source_title] || "").toLowerCase();
     const publisher = (sourcePublishers[h.source_title] || "").toLowerCase();
     const url = (h.source_url || "").toLowerCase();
+    const title = (h.source_title || "").toLowerCase();
     if (
       isPrimaryLocalLawSource({
         title: h.source_title,
@@ -878,18 +926,20 @@ export default async function handler(
       return -1;
     }
 
-    // Highest priority: laws / regulations / safety + official gov / knesset / nevo
-    if (
+    const isLawDocType =
       docType.startsWith("law_") ||
       docType.startsWith("regulation_") ||
-      docType.startsWith("safety_") ||
+      docType.startsWith("safety_");
+    const isKnownLawPublisher =
       publisher.includes("knesset") ||
-      publisher.includes("gov") ||
       publisher.includes("nevo") ||
       url.includes("knesset.gov.il") ||
-      url.includes("gov.il") ||
-      url.includes("nevo.co.il")
-    ) {
+      url.includes("nevo.co.il");
+    const isGovElectricLaw =
+      (publisher.includes("gov") || url.includes("gov.il")) &&
+      isElectricLawish(title, url);
+
+    if (isLawDocType || isKnownLawPublisher || isGovElectricLaw) {
       return 0;
     }
 
@@ -1029,8 +1079,24 @@ export default async function handler(
 
   // Scope mode from UI
   if (selectedScope === "law_only") {
-    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) <= 0);
-    rankedHits = legalOnly;
+    rankedHits = rankedHits.filter((h) => {
+      const docType = (sourceDocTypes[h.source_title] || "").toLowerCase();
+      const url = (h.source_url || "").toLowerCase();
+      const title = (h.source_title || "").toLowerCase();
+
+      const isLawDocType =
+        docType.startsWith("law_") ||
+        docType.startsWith("regulation_") ||
+        docType.startsWith("safety_");
+      const isNevoOrKnesset =
+        url.includes("nevo.co.il") || url.includes("knesset.gov.il");
+      const isElectricLaw = isElectricLawish(title, url);
+
+      if (isLawDocType) return true;
+      if (isNevoOrKnesset && isElectricLaw) return true;
+      if (url.includes("gov.il") && isElectricLaw) return true;
+      return false;
+    });
   } else if (selectedScope === "law_plus_utility") {
     rankedHits = rankedHits.filter((h) => getPriorityForHit(h) <= 1);
   }
@@ -1078,6 +1144,8 @@ export default async function handler(
   // instead of unrelated legal text.
   if (rankedHits.length === 0 && isBathroomIntent && !isMedicalIntent) {
     return res.status(200).json({
+      kind: "rag",
+      title: "חוק ותקנות",
       bottomLine:
         "לא מצאתי כרגע במאגר החוקי קטע ברור מספיק על 'אמבטיה' בהקשר שביקשת.",
       steps: [],
@@ -1119,6 +1187,8 @@ export default async function handler(
       rankedHits = legalHits;
     } else {
       return res.status(200).json({
+        kind: "rag",
+        title: "חוק ותקנות",
         bottomLine:
           'לא מצאתי במאגר החוקי קטעים רלוונטיים מספיק לשאלה זו. נסה ניסוח ממוקד יותר (למשל: "מרחק מאמבטיה לפי תקנות") או עדכן מקורות חוק/תקנות נוספים.',
         steps: [],
@@ -1191,7 +1261,7 @@ export default async function handler(
       : h.source_url || undefined,
   }));
 
-  const sources: AskSource[] = top.map((h) => ({
+  const sources: SourceRef[] = top.map((h) => ({
     title: isMaskedIndexSource({
       title: h.source_title,
       url: sourceUrls[h.source_title] || h.source_url || "",
@@ -1223,6 +1293,8 @@ export default async function handler(
 
     if (!ok) {
       return res.status(200).json({
+        kind: "rag",
+        title: "חוק ותקנות",
         bottomLine:
           "אין לי במקורות שהוחזרו סעיף שמדבר על התנגדות הארקה באוהם, אז לא ניתן לקבוע תקינות מתוך המסמכים כרגע.",
         steps: [],
@@ -1266,7 +1338,12 @@ export default async function handler(
     sources,
   });
 
-  const responsePayload: AskResponse = llmResult || fallback;
+  const basePayload = llmResult || fallback;
+  const responsePayload: Answer = {
+    ...basePayload,
+    kind: basePayload.kind || "rag",
+    title: basePayload.title || "חוק ותקנות",
+  };
   const DEBUG = process.env.DEBUG_RAG === "1";
 
   if (DEBUG) {
@@ -1287,6 +1364,8 @@ export default async function handler(
   }
 
   return res.status(200).json({
+    kind: responsePayload.kind || "rag",
+    title: responsePayload.title || "חוק ותקנות",
     bottomLine: responsePayload.bottomLine,
     steps: responsePayload.steps || [],
     cautions: responsePayload.cautions || [],

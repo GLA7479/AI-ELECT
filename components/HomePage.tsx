@@ -5,7 +5,7 @@ import Layout from "../components/Layout";
 import { db } from "../lib/db";
 import { offlineSearch } from "../lib/search";
 import { nanoid } from "../lib/utils";
-import type { AskResponse } from "../src/types/ask";
+import type { Answer } from "../src/types/answer";
 
 type ScopeMode = "law_only" | "law_plus_utility" | "all";
 type ConversationItem = { q: string; createdAt?: string };
@@ -21,12 +21,13 @@ async function askOnline(
   question: string,
   scope: ScopeMode,
   history: Array<{ q: string; createdAt?: string }>,
-  issueType: string
+  issueType: string,
+  modeHint: "auto" | "calc" | "flow" | "rag"
 ) {
   const r = await fetch("/api/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, scope, history, issueType }),
+    body: JSON.stringify({ question, scope, history, issueType, modeHint }),
   });
 
   if (!r.ok) {
@@ -34,15 +35,18 @@ async function askOnline(
     throw new Error(msg || "Online request failed");
   }
 
-  return (await r.json()) as AskResponse;
+  return (await r.json()) as Answer;
 }
 
 export default function HomePage() {
   const [q, setQ] = useState("");
-  const [answer, setAnswer] = useState<AskResponse | null>(null);
+  const [answer, setAnswer] = useState<Answer | null>(null);
   const [busy, setBusy] = useState(false);
   const [scope, setScope] = useState<ScopeMode>("law_only");
   const [issueType, setIssueType] = useState(ISSUE_TYPES[0]);
+  const [modeHint, setModeHint] = useState<"auto" | "calc" | "flow" | "rag">(
+    "auto"
+  );
   const [conversationHistory, setConversationHistory] = useState<
     ConversationItem[]
   >([]);
@@ -62,7 +66,13 @@ export default function HomePage() {
     try {
       // Prefer online when available
       if (typeof window !== "undefined" && navigator.onLine) {
-        const data = await askOnline(question, scope, conversationHistory, issueType);
+        const data = await askOnline(
+          question,
+          scope,
+          conversationHistory,
+          issueType,
+          modeHint
+        );
         setAnswer(data);
 
         await db.history.add({
@@ -86,6 +96,8 @@ export default function HomePage() {
 
       if (hits.length === 0) {
         setAnswer({
+          kind: "rag",
+          title: "אוף־ליין",
           bottomLine:
             "לא מצאתי במאגר המקומי מקור מספיק לשאלה הזו. כשיהיה חיבור, אנסה לתת תשובה מלאה ממקורות רשמיים.",
           steps: [],
@@ -96,6 +108,8 @@ export default function HomePage() {
         });
       } else {
         setAnswer({
+          kind: "rag",
+          title: "אוף־ליין",
           bottomLine:
             "מצאתי מידע רלוונטי במאגר האוף־ליין. זו תשובה התחלתית בלבד.",
           steps: hits.slice(0, 3).map((h) => h.text.slice(0, 220)),
@@ -108,7 +122,7 @@ export default function HomePage() {
       await db.history.add({
         id: nanoid(),
         q: question,
-        a: hits.length ? "Offline answer (demo) with citations." : "No offline match.",
+        a: hits.length ? "נמצאה תשובת אוף־ליין התחלתית עם מקורות." : "לא נמצאה התאמה מקומית.",
         createdAt: new Date().toISOString(),
         mode: "offline",
       });
@@ -151,6 +165,17 @@ export default function HomePage() {
           </select>
           <select
             className="input"
+            style={{ width: 190, maxWidth: "100%" }}
+            value={modeHint}
+            onChange={(e) => setModeHint(e.target.value as "auto" | "calc" | "flow" | "rag")}
+          >
+            <option value="auto">מצב: אוטומטי</option>
+            <option value="calc">מצב: מחשבונים</option>
+            <option value="flow">מצב: אבחון תקלות</option>
+            <option value="rag">מצב: תקנים/חוק</option>
+          </select>
+          <select
+            className="input"
             style={{ width: 220, maxWidth: "100%" }}
             value={issueType}
             onChange={(e) => setIssueType(e.target.value)}
@@ -162,7 +187,7 @@ export default function HomePage() {
             ))}
           </select>
 
-          <span className="badge">{online ? "Online" : "Offline"}</span>
+          <span className="badge">{online ? "מחובר" : "אוף־ליין"}</span>
           {answer?.confidence && (
             <span className="badge">ביטחון: {answer.confidence}</span>
           )}
@@ -189,7 +214,9 @@ export default function HomePage() {
         {answer && (
           <>
             <hr />
-            <div className="h2">תשובה</div>
+            <div className="h2">
+              תשובה{answer.title ? ` — ${answer.title}` : ""}
+            </div>
             <div className="space-y-3" style={{ marginBottom: 12 }}>
               <div className="h2" style={{ fontSize: 20 }}>
                 {answer.bottomLine}
@@ -208,13 +235,13 @@ export default function HomePage() {
                 </div>
               )}
 
-              {answer.cautions?.length > 0 && (
+              {(answer.cautions?.length ?? 0) > 0 && (
                 <div>
                   <div className="small" style={{ fontWeight: 700 }}>
                     זהירות:
                   </div>
                   <ul style={{ margin: 0, paddingInlineStart: 20 }}>
-                    {answer.cautions.map((c, i) => (
+                    {(answer.cautions || []).map((c, i) => (
                       <li key={i}>{c}</li>
                     ))}
                   </ul>
@@ -244,7 +271,7 @@ export default function HomePage() {
               </div>
             ) : null}
 
-            {answer.sources.length > 0 && (
+            {(answer.sources?.length ?? 0) > 0 && (
               <>
                 <hr />
                 <div className="h2">מקורות</div>
@@ -252,7 +279,7 @@ export default function HomePage() {
                   className="small"
                   style={{ margin: 0, paddingInlineStart: 18 }}
                 >
-                  {answer.sources.map((c, i) => (
+                  {(answer.sources || []).map((c, i) => (
                     <li key={i}>
                       {c.title} — {c.section}
                       {c.url ? (
@@ -270,7 +297,7 @@ export default function HomePage() {
               </>
             )}
             <div className="small" style={{ marginTop: 8, opacity: 0.8 }}>
-              Confidence: {answer.confidence}
+              רמת ביטחון: {answer.confidence}
             </div>
           </>
         )}
