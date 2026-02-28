@@ -32,6 +32,14 @@ function parseOhms(text: string): number | null {
   return Number(m[1]);
 }
 
+function parseAmpsOnly(text: string): number | null {
+  const s = normalizeHebrewText(text || "").trim().replace(/,/g, ".");
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0 || n > 1000) return null;
+  return n;
+}
+
 function parseMeasurementType(text: string): "RA" | "ZS" | "PE" | null {
   const t = normalizeHebrewText(text || "").toLowerCase();
   if (/ra|r_a|אלקטרוד|אלקטרודה/.test(t)) return "RA";
@@ -61,6 +69,13 @@ function parseRcd(text: string): 30 | 100 | 300 | null | undefined {
 
 function applyPendingAnswer(state: ChatState, userText: string): boolean {
   const t = userText.trim();
+
+  // Always capture ohms if present (even if no pendingSlot)
+  const ohm = parseOhms(t);
+  if (ohm != null) {
+    state.slots.value_ohm = ohm;
+  }
+
   if (!state.pendingSlot) return false;
 
   if (state.pendingSlot === "measurement_type") {
@@ -93,7 +108,19 @@ function applyPendingAnswer(state: ChatState, userText: string): boolean {
   if (state.pendingSlot === "protection") {
     const parsed = parseProtection(t);
     if (parsed) {
-      state.slots.protection = parsed;
+      // If we had "?16" and now got "C16", replace it
+      if (typeof state.slots.protection === "string" && /^\?\d+$/.test(state.slots.protection)) {
+        // If parsed is just amps again, keep the "?16" format
+        if (/^\?\d+$/.test(parsed)) {
+          // Still just amps, keep it
+          state.slots.protection = parsed;
+        } else {
+          // Got full protection type (e.g. "C16"), replace "?16"
+          state.slots.protection = parsed;
+        }
+      } else {
+        state.slots.protection = parsed;
+      }
       state.pendingSlot = undefined;
       return true;
     }
@@ -106,12 +133,6 @@ function applyPendingAnswer(state: ChatState, userText: string): boolean {
       state.pendingSlot = undefined;
       return true;
     }
-  }
-
-  // Always try to capture ohms value if present
-  const ohm = parseOhms(t);
-  if (ohm != null) {
-    state.slots.value_ohm = ohm;
   }
 
   return false;
@@ -174,13 +195,23 @@ function nextEarthingQuestion(state: ChatState): Answer | null {
 
 function parseProtection(text: string): string | null {
   const t = normalizeHebrewText(text || "").toLowerCase();
-  // Match patterns like "C16", "B20", "D10", "נתיך 16", "מאמ\"ת C16"
-  const m = t.match(/([bcd])\s*(\d+)|נתיך\s*(\d+)|מאמ"?ת\s*([bcd])\s*(\d+)/i);
-  if (m) {
-    if (m[3]) return `נתיך ${m[3]}`;
-    if (m[1] && m[2]) return `${m[1].toUpperCase()}${m[2]}`;
-    if (m[4] && m[5]) return `${m[4].toUpperCase()}${m[5]}`;
-  }
+
+  // C16 / B20 / D10
+  const m1 = t.match(/\b([bcd])\s*(\d+)\b/i);
+  if (m1) return `${m1[1].toUpperCase()}${m1[2]}`;
+
+  // "מאמ"ת C16"
+  const m2 = t.match(/מאמ"?ת\s*([bcd])\s*(\d+)/i);
+  if (m2) return `${m2[1].toUpperCase()}${m2[2]}`;
+
+  // "נתיך 16" / "fuse 16"
+  const m3 = t.match(/נתיך\s*(\d+)/i) || t.match(/fuse\s*(\d+)/i);
+  if (m3) return `נתיך ${m3[1]}`;
+
+  // JUST "16" -> store as unknown type with amps
+  const amps = parseAmpsOnly(t);
+  if (amps != null) return `?${amps}`;
+
   return null;
 }
 
@@ -207,6 +238,23 @@ function nextLoopFaultQuestion(state: ChatState): Answer | null {
       cautions: [],
       sources: [],
       confidence: "low",
+    };
+  }
+
+  // If user gave only amps (e.g. "16") and we stored "?16" -> ask only for type/curve
+  if (typeof slots.protection === "string" && /^\?\d+$/.test(slots.protection)) {
+    const amps = Number(slots.protection.slice(1));
+    state.pendingSlot = "protection"; // נשאר אותו slot, אבל עכשיו מחכים ל-B/C/D/נתיך
+    return {
+      kind: "flow",
+      title: "לולאת תקלה (Zs)",
+      bottomLine: `קיבלתי ${amps}A. חסר רק סוג ההגנה כדי להמשיך.`,
+      steps: [],
+      requiredInfo: ['סוג הגנה: מאמ"ת B/C/D או נתיך'],
+      followUpQuestion: `זה מאמ"ת B${amps}/C${amps}/D${amps} או נתיך ${amps}? אם לא יודע—בדירות לרוב זה C.`,
+      cautions: [],
+      sources: [],
+      confidence: "high",
     };
   }
 
@@ -446,7 +494,8 @@ function normalizeChatState(raw: any): ChatState {
 function topicFromIssueType(issueType?: string): ChatTopic | null {
   const t = normalizeHebrewText(issueType || "");
   if (!t) return null;
-  if (/הארקה|לולאת תקלה/i.test(t)) return "loop_fault";
+  if (/לולאת תקלה/i.test(t)) return "loop_fault";
+  if (/הארקה/i.test(t)) return "earthing";
   if (/פחת|rcd/i.test(t)) return "rcd";
   if (/חימום כבלים|כבל|עומס/i.test(t)) return "cable";
   if (/לוח חשמל|פאזה/i.test(t)) return "general";
@@ -1447,14 +1496,40 @@ export default async function handler(
 
   // ===== Short follow-up questions: only if NO pending slot and NO short command =====
   if (!baseChatState.pendingSlot && !shortCmd && isShortFollowupQuestion(q) && hasActiveTopic) {
-    const clarify = buildTopicClarifyAnswer(activeTopic);
+    // אם יש שאלה תלויה קודמת – תתייחס לזה כתשובה לאותה שאלה (ולא "השוואה")
+    if (baseChatState.pendingQuestion) {
+      // תנסה לנתח כאילו היה pendingSlot הגיוני לפי topic
+      // במקרה loop_fault: אם המשתמש כתב "TT"/"TN" או מספר או "C16" – זה תשובה
+      const applied = applyPendingAnswer(baseChatState, q);
+      if (applied) {
+        const nextQ =
+          baseChatState.topic === "loop_fault"
+            ? nextLoopFaultQuestion(baseChatState)
+            : baseChatState.topic === "earthing"
+              ? nextEarthingQuestion(baseChatState)
+              : null;
+
+        if (nextQ) {
+          return res.status(200).json({
+            ...nextQ,
+            chatState: baseChatState,
+          });
+        }
+      }
+    }
+
+    // אחרת – הבהרה כללית (לא "השוואה")
     return res.status(200).json({
-      ...clarify,
-      chatState: {
-        ...baseChatState,
-        stage: "collecting",
-        pendingQuestion: clarify.followUpQuestion,
-      },
+      kind: "flow",
+      title: "שאלת הבהרה",
+      bottomLine: "כדי להמשיך צריך פרט אחד קצר.",
+      steps: [],
+      requiredInfo: ["מה בדיוק אתה רוצה שאבצע עכשיו"],
+      followUpQuestion: "כתוב בקצרה: חישוב / תקין? / מקור / הסבר",
+      cautions: [],
+      sources: [],
+      confidence: "high",
+      chatState: { ...baseChatState, stage: "collecting" },
     });
   }
 
