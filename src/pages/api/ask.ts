@@ -274,6 +274,100 @@ function isElectricityLegalHit(hit: {
   return positive && !negative;
 }
 
+function hasMojibakeNoise(text: string): boolean {
+  const t = text || "";
+  if (!t.trim()) return false;
+  // Common broken-encoding chars seen in corrupted PDF extraction.
+  const suspicious = (t.match(/[À-ÿÆØß≤≥∑∂∏∫∑˜]/g) || []).length;
+  const len = Math.max(t.length, 1);
+  if (suspicious / len > 0.08) return true;
+  if (/Ì|Æ|≤|∑|˜/.test(t) && suspicious > 12) return true;
+  return false;
+}
+
+function extractQueryContextFlags(question: string) {
+  const q = normalizeHebrewText(question || "").toLowerCase();
+  return {
+    residential: /(דיר(?:ה|ת)|מגורים|בית(?:\s+מגורים)?)/i.test(q),
+    medical: /(רפואי|מרפאה|קליניקה|בית חולים|אתר רפואי)/i.test(q),
+    pool: /(בריכ(?:ה|ות)|מאגר מים|מים)/i.test(q),
+    agricultural: /(חקלאי|חצרים חקלאיים|לול|רפת)/i.test(q),
+    construction: /(אתר בניה|בניה|קרון מגורים|מיתקן ארעי)/i.test(q),
+  };
+}
+
+function isUnrelatedContextForQuery(params: {
+  question: string;
+  domainIntent: DomainIntent;
+  hit: Hit;
+}): boolean {
+  const { question, domainIntent, hit } = params;
+  const ctx = extractQueryContextFlags(question);
+  const hay = normalizeHebrewText(
+    `${hit.source_title || ""} ${hit.section || ""} ${hit.text || ""}`
+  ).toLowerCase();
+  const titleOnly = normalizeHebrewText(hit.source_title || "").toLowerCase();
+
+  // Prefer binding regulations over generic interpretation memos unless explicitly requested.
+  if (!/(פירוש|פרשנות|מינהל החשמל|הבהרה|חוזר)/i.test(normalizeHebrewText(question || ""))) {
+    if (
+      /(פירושים בעניין יישום|מינהל החשמל|פניה)/i.test(titleOnly) ||
+      /^\d{2}-\d{2}-\d{2}$/.test((hit.source_title || "").trim())
+    ) {
+      return true;
+    }
+  }
+
+  // For core grounding questions, avoid pulling "special sites" unless user asked for them.
+  if (domainIntent === "grounding") {
+    if (!ctx.medical && /(רפואי|סביבת מטופל|אתר רפואי)/i.test(hay)) return true;
+    if (!ctx.pool && /(בריכ(?:ה|ות)|מאגר מים)/i.test(hay)) return true;
+    if (!ctx.agricultural && /(חקלאי|חצרים חקלאיים|לול|רפת)/i.test(hay)) return true;
+    if (!ctx.construction && /(אתר בניה|קרון מגורים|מיתקן ארעי)/i.test(hay)) return true;
+  }
+
+  // For residential questions, suppress special environments unless explicit in query.
+  if (ctx.residential) {
+    if (!ctx.medical && /(רפואי|סביבת מטופל|אתר רפואי)/i.test(hay)) return true;
+    if (!ctx.pool && /(בריכ(?:ה|ות)|מאגר מים)/i.test(hay)) return true;
+    if (!ctx.agricultural && /(חקלאי|חצרים חקלאיים|לול|רפת)/i.test(hay)) return true;
+  }
+
+  return false;
+}
+
+function contextMatchBoost(question: string, hit: Hit): number {
+  const ctx = extractQueryContextFlags(question);
+  const hay = normalizeHebrewText(
+    `${hit.source_title || ""} ${hit.section || ""} ${hit.text || ""}`
+  ).toLowerCase();
+  let score = 0;
+  if (ctx.residential && /(דיר(?:ה|ת)|מגורים|בית(?:\s+מגורים)?)/i.test(hay)) score += 0.45;
+  if (ctx.medical && /(רפואי|מרפאה|קליניקה|בית חולים)/i.test(hay)) score += 0.45;
+  if (ctx.pool && /(בריכ(?:ה|ות)|מאגר מים)/i.test(hay)) score += 0.35;
+  if (ctx.agricultural && /(חקלאי|חצרים חקלאיים|לול|רפת)/i.test(hay)) score += 0.35;
+  if (ctx.construction && /(אתר בניה|קרון מגורים|מיתקן ארעי)/i.test(hay)) score += 0.35;
+  return score;
+}
+
+function strongIntentMatch(question: string, hit: Hit, domainIntent: DomainIntent): boolean {
+  const q = normalizeHebrewText(question || "").toLowerCase();
+  const hay = normalizeHebrewText(
+    `${hit.source_title || ""} ${hit.section || ""} ${hit.text || ""}`
+  ).toLowerCase();
+
+  if (domainIntent === "grounding" || /הארקה/.test(q)) {
+    return /(הארקה|מוליך הארקה|השוואת פוטנציאלים|tt|tn|pe|איפוס)/i.test(hay);
+  }
+  if (domainIntent === "bathroom") {
+    return /(אמבט|מקלח|חדר רחצה|אזור\s*[012]|רטוב)/i.test(hay);
+  }
+  if (domainIntent === "rcd") {
+    return /(פחת|rcd|ממסר פחת)/i.test(hay);
+  }
+  return true;
+}
+
 const NOISE_PATTERNS = [
   /your browser does not support the video tag/gi,
   /skip to main content/gi,
@@ -867,6 +961,26 @@ export default async function handler(
     })
   );
 
+  // Drop corrupted text chunks (encoding garbage) from retrieval.
+  rankedHits = rankedHits.filter((h) => !hasMojibakeNoise(h.text || ""));
+
+  // Remove legally-valid but contextually unrelated hits (e.g. medical/pool for residential grounding).
+  const contextFiltered = rankedHits.filter(
+    (h) =>
+      !isUnrelatedContextForQuery({
+        question: contextualQuestion,
+        domainIntent,
+        hit: h,
+      })
+  );
+  if (contextFiltered.length > 0) rankedHits = contextFiltered;
+
+  // Require strong intent matches for common legal domains to keep answers precise.
+  const strongIntentHits = rankedHits.filter((h) =>
+    strongIntentMatch(contextualQuestion, h, domainIntent)
+  );
+  if (strongIntentHits.length > 0) rankedHits = strongIntentHits;
+
   // Unless user asked for supplier/catalog info explicitly, hide catalog hits when better sources exist
   if (!isCatalogIntent) {
     const nonCatalog = rankedHits.filter((h) => getPriorityForHit(h) <= 2);
@@ -965,6 +1079,7 @@ export default async function handler(
     // Keep OCR-heavy legal text unless it is severely corrupted.
     if (controlChars >= 60) return false;
     if (noiseRatio > 0.08) return false;
+    if (hasMojibakeNoise(text)) return false;
 
     return true;
   };
@@ -1002,6 +1117,9 @@ export default async function handler(
     const domainA = domainRelevanceScore(domainIntent, a);
     const domainB = domainRelevanceScore(domainIntent, b);
     if (domainA !== domainB) return domainB - domainA;
+    const contextA = contextMatchBoost(contextualQuestion, a);
+    const contextB = contextMatchBoost(contextualQuestion, b);
+    if (contextA !== contextB) return contextB - contextA;
     return (b.rank || 0) - (a.rank || 0);
   });
 
