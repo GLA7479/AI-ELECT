@@ -202,6 +202,9 @@ type SourceMeta = {
   doc_type: string | null;
 };
 
+const PRIMARY_LAW_DISPLAY_TITLE = "חוק החשמל — מקור חוקי";
+const PRIMARY_LAW_DISPLAY_URL = "https://fs.knesset.gov.il/2/law/2_lsr_208393.PDF";
+
 function isPrimaryLocalLawSource(source: {
   title?: string | null;
   publisher?: string | null;
@@ -212,9 +215,63 @@ function isPrimaryLocalLawSource(source: {
   const url = (source.url || "").toLowerCase();
   return (
     publisher.includes("official_local_pdf") ||
+    publisher.includes("official_local_word") ||
     url.startsWith("file:חוק-החשמל-2017.pdf") ||
+    url.startsWith("file:חוק-החשמל-2017.docx") ||
+    url.startsWith("file:חוק-החשמל-2017.doc") ||
     (title.includes("חוק החשמל") && title.includes("2017"))
   );
+}
+
+function isGovernmentLawSource(source: {
+  publisher?: string | null;
+  url?: string | null;
+}): boolean {
+  const publisher = (source.publisher || "").toLowerCase();
+  const url = (source.url || "").toLowerCase();
+  return (
+    publisher.includes("knesset") ||
+    publisher.includes("gov") ||
+    publisher.includes("nevo") ||
+    url.includes("knesset.gov.il") ||
+    url.includes("gov.il") ||
+    url.includes("nevo.co.il")
+  );
+}
+
+function isMaskedIndexSource(source: {
+  title?: string | null;
+  url?: string | null;
+  docType?: string | null;
+}): boolean {
+  const title = (source.title || "").toLowerCase();
+  const url = (source.url || "").toLowerCase();
+  const docType = (source.docType || "").toLowerCase();
+  return (
+    docType.includes("index") ||
+    url.includes("mmok_takanot_maagar_2025") ||
+    title.includes("מאגר תקנות")
+  );
+}
+
+function isElectricityLegalHit(hit: {
+  source_title?: string | null;
+  source_url?: string | null;
+  section?: string | null;
+  text?: string | null;
+}): boolean {
+  const hay = normalizeHebrewText(
+    `${hit.source_title || ""} ${hit.source_url || ""} ${hit.section || ""} ${hit.text || ""}`
+  ).toLowerCase();
+  const positive =
+    /(חשמל|תקנות|חוק|הארק|חישמול|פחת|לוח|מיתקן|מקלחת|אמבט|בטיחות בעבודה|סעיף|תקנה|ground|rcd)/i.test(
+      hay
+    );
+  const negative =
+    /(קבלת קהל|רכב|דרכון|ארנונה|נישואין|תעסוקה|שכר|רישוי|מענק|חינוך|ביטוח לאומי)/i.test(
+      hay
+    );
+  return positive && !negative;
 }
 
 const NOISE_PATTERNS = [
@@ -346,7 +403,7 @@ function dedupeHits(hits: Hit[]): Hit[] {
 
 function detectDomainIntent(question: string): DomainIntent {
   const q = normalizeHebrewText(question || "").toLowerCase();
-  if (/(אמבטיה|מקלחת|חדר רחצה|רטוב)/.test(q)) return "bathroom";
+  if (/(אמבט|אמבטיה|מקלח|מקלחת|חדר רחצה|רטוב|אזור\s*[012])/.test(q)) return "bathroom";
   if (/(ברז גינה|גינה|חצר|חוץ)/.test(q)) return "garden";
   if (/(הארקה|מוליך הארקה|השוואת פוטנציאלים|pe)/.test(q)) return "grounding";
   if (/(פחת|rcd|ממסר פחת)/.test(q)) return "rcd";
@@ -446,8 +503,14 @@ async function fallbackLawChunkSearch(params: {
   if (srcErr || !sourcesData || sourcesData.length === 0) return [];
 
   const legalSources = sourcesData as SourceMeta[];
-  const sourceById = new Map(legalSources.map((s) => [s.id, s]));
-  const sourceIds = legalSources.map((s) => s.id);
+  const allowedLegalSources = legalSources.filter(
+    (s) =>
+      (isPrimaryLocalLawSource(s) || isGovernmentLawSource(s)) &&
+      !isMaskedIndexSource({ title: s.title, url: s.url, docType: s.doc_type })
+  );
+  if (allowedLegalSources.length === 0) return [];
+  const sourceById = new Map(allowedLegalSources.map((s) => [s.id, s]));
+  const sourceIds = allowedLegalSources.map((s) => s.id);
 
   // 2) read chunks from legal sources
   const { data: chunksData, error: chunksErr } = await supabase
@@ -654,17 +717,19 @@ export default async function handler(
   const sourceTitles = [...new Set(hits.map((h) => h.source_title).filter(Boolean))];
   const sourceDocTypes: Record<string, string> = {};
   const sourcePublishers: Record<string, string> = {};
+  const sourceUrls: Record<string, string> = {};
 
   if (sourceTitles.length > 0) {
     const { data: sourcesData } = await supabase
       .from("sources")
-      .select("title, doc_type, publisher")
+      .select("title, doc_type, publisher, url")
       .in("title", sourceTitles);
 
     if (sourcesData) {
       for (const s of sourcesData) {
         sourceDocTypes[s.title] = s.doc_type || "";
         sourcePublishers[s.title] = s.publisher || "";
+        sourceUrls[s.title] = s.url || "";
       }
     }
   }
@@ -685,6 +750,15 @@ export default async function handler(
     const docType = (sourceDocTypes[h.source_title] || "").toLowerCase();
     const publisher = (sourcePublishers[h.source_title] || "").toLowerCase();
     const url = (h.source_url || "").toLowerCase();
+    if (
+      isPrimaryLocalLawSource({
+        title: h.source_title,
+        publisher,
+        url,
+      })
+    ) {
+      return -1;
+    }
 
     // Highest priority: laws / regulations / safety + official gov / knesset / nevo
     if (
@@ -761,6 +835,38 @@ export default async function handler(
     return (b.rank || 0) - (a.rank || 0);
   });
 
+  // Hard filter policy requested by user:
+  // 1) local WORD/PDF law file first
+  // 2) then governmental sources only
+  // 3) never private websites in final answer.
+  rankedHits = rankedHits.filter((h) => {
+    const publisher = sourcePublishers[h.source_title] || "";
+    const metaUrl = sourceUrls[h.source_title] || h.source_url || "";
+    const docType = sourceDocTypes[h.source_title] || "";
+    return (
+      (isPrimaryLocalLawSource({
+        title: h.source_title,
+        publisher,
+        url: metaUrl,
+      }) ||
+        isGovernmentLawSource({
+          publisher,
+          url: metaUrl,
+        })) &&
+      !isMaskedIndexSource({ title: h.source_title, url: metaUrl, docType })
+    );
+  });
+
+  // Electricity-only safety net: never answer from generic non-electric gov pages.
+  rankedHits = rankedHits.filter((h) =>
+    isElectricityLegalHit({
+      source_title: h.source_title,
+      source_url: sourceUrls[h.source_title] || h.source_url || "",
+      section: h.section,
+      text: h.text,
+    })
+  );
+
   // Unless user asked for supplier/catalog info explicitly, hide catalog hits when better sources exist
   if (!isCatalogIntent) {
     const nonCatalog = rankedHits.filter((h) => getPriorityForHit(h) <= 2);
@@ -785,7 +891,7 @@ export default async function handler(
 
   // Scope mode from UI
   if (selectedScope === "law_only") {
-    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) === 0);
+    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) <= 0);
     rankedHits = legalOnly;
   } else if (selectedScope === "law_plus_utility") {
     rankedHits = rankedHits.filter((h) => getPriorityForHit(h) <= 1);
@@ -810,7 +916,7 @@ export default async function handler(
   // If this is not a utility-specific question and we have legal hits,
   // force legal sources to dominate the final answer.
   if (!isUtilityIntent) {
-    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) === 0);
+    const legalOnly = rankedHits.filter((h) => getPriorityForHit(h) <= 0);
     if (legalOnly.length > 0) rankedHits = legalOnly;
   }
 
@@ -868,7 +974,7 @@ export default async function handler(
 
   // Hard rule: if question is not utility-specific, never answer from utility-only hits.
   if (!isUtilityIntent) {
-    const legalHits = rankedHits.filter((h) => getPriorityForHit(h) === 0);
+    const legalHits = rankedHits.filter((h) => getPriorityForHit(h) <= 0);
     if (legalHits.length > 0) {
       rankedHits = legalHits;
     } else {
@@ -920,13 +1026,25 @@ export default async function handler(
   const top = diverseTop.length > 0 ? diverseTop : rankedHits.slice(0, 4);
 
   const segments: AnswerSegment[] = top.map((h) => ({
-    title: h.source_title,
+    title: isMaskedIndexSource({
+      title: h.source_title,
+      url: sourceUrls[h.source_title] || h.source_url || "",
+      docType: sourceDocTypes[h.source_title] || "",
+    })
+      ? PRIMARY_LAW_DISPLAY_TITLE
+      : h.source_title,
     section:
       h.section && !/^chunk\s+\d+/i.test(h.section)
         ? h.section
         : "קטע רלוונטי",
     text: shortSnippet(cleanAnswerText(h.text || ""), 320),
-    url: h.source_url || undefined,
+    url: isMaskedIndexSource({
+      title: h.source_title,
+      url: sourceUrls[h.source_title] || h.source_url || "",
+      docType: sourceDocTypes[h.source_title] || "",
+    })
+      ? PRIMARY_LAW_DISPLAY_URL
+      : h.source_url || undefined,
   }));
 
   const llmResult = await generateConversationalAnswer({
@@ -947,9 +1065,21 @@ export default async function handler(
   const followUpQuestion = llmResult?.followUpQuestion || fallback.followUpQuestion;
 
   const citations = top.map((h) => ({
-    title: h.source_title,
+    title: isMaskedIndexSource({
+      title: h.source_title,
+      url: sourceUrls[h.source_title] || h.source_url || "",
+      docType: sourceDocTypes[h.source_title] || "",
+    })
+      ? PRIMARY_LAW_DISPLAY_TITLE
+      : h.source_title,
     section: h.section || "ללא סעיף",
-    url: h.source_url || undefined,
+    url: isMaskedIndexSource({
+      title: h.source_title,
+      url: sourceUrls[h.source_title] || h.source_url || "",
+      docType: sourceDocTypes[h.source_title] || "",
+    })
+      ? PRIMARY_LAW_DISPLAY_URL
+      : h.source_url || undefined,
     locator: h.locator || undefined,
   }));
 

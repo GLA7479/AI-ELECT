@@ -1,6 +1,12 @@
 [
   {
-    "title": "חוק החשמל, תשע\"ז-2017 — PDF מקומי",
+    "title": "חוק החשמל, תשע\"ז-2017 — WORD מקומי",
+    "url": "file:חוק-החשמל-2017.doc",
+    "publisher": "official_local_word",
+    "doc_type": "law_pdf"
+  },
+  {
+    "title": "חוק החשמל, תשע\"ז-2017 — PDF מקומי (גיבוי)",
     "url": "file:חוק-החשמל-2017.pdf",
     "publisher": "official_local_pdf",
     "doc_type": "law_pdf"

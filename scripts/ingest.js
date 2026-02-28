@@ -22,6 +22,7 @@ if (!SUPABASE_SERVICE_ROLE_KEY)
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+const INGEST_VISITED_URLS = new Set();
 
 function sha256(s) {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -318,6 +319,135 @@ function findPdfLinksInHtml(html, baseUrl) {
   });
 
   return [...new Set(links)];
+}
+
+function toAbsoluteUrlMaybe(href, baseUrl) {
+  if (!href) return null;
+  const raw = String(href).trim();
+  if (!raw) return null;
+  try {
+    if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+    if (raw.startsWith("/")) {
+      const base = new URL(baseUrl);
+      return `${base.origin}${raw}`;
+    }
+    return new URL(raw, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeUrlForQueue(url) {
+  try {
+    const u = new URL(url);
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+function isAllowedGovHost(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return (
+      h === "gov.il" ||
+      h.endsWith(".gov.il") ||
+      h === "knesset.gov.il" ||
+      h.endsWith(".knesset.gov.il") ||
+      h === "nevo.co.il" ||
+      h.endsWith(".nevo.co.il")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function inferPublisherByUrl(url) {
+  const u = (url || "").toLowerCase();
+  if (u.includes("knesset.gov.il")) return "knesset";
+  if (u.includes("gov.il")) return "gov.il";
+  if (u.includes("nevo.co.il")) return "nevo";
+  return "gov.il";
+}
+
+function inferDocTypeByUrl(url) {
+  const u = (url || "").toLowerCase();
+  if (u.includes(".pdf")) return "regulation_pdf";
+  if (u.includes(".docx") || u.includes(".doc")) return "regulation_doc";
+  return "regulation_html";
+}
+
+function buildFallbackTitle(url) {
+  try {
+    const u = new URL(url);
+    return `מקור רגולטורי רשמי — ${u.hostname}${u.pathname}`;
+  } catch {
+    return "מקור רגולטורי רשמי";
+  }
+}
+
+function isElectricityRegulationLike(params) {
+  const title = normalizeText(params?.title || "").toLowerCase();
+  const url = String(params?.url || "").toLowerCase();
+  const hay = `${title} ${url}`;
+
+  // Keep only legal/electricity regulation style links and drop generic gov pages.
+  const positive =
+    /(חשמל|תקנות|חוק|הארק|חישמול|פחת|לוח|מיתקן|בטיחות בעבודה|knesset|law|regulation)/i.test(
+      hay
+    );
+  const negative =
+    /(רכב|קבלת קהל|דרכון|ארנונה|רישוי|ביטוח לאומי|חינוך|קורונה|נישואין|מענק|תעודת זהות|שכר|תעסוקה)/i.test(
+      hay
+    );
+
+  return positive && !negative;
+}
+
+async function discoverGovernmentSourcesFromIndexPage(indexUrl) {
+  const outMap = new Map();
+  try {
+    const { html, fileLinks } = await fetchHtmlViaBrowser(indexUrl);
+    const $ = cheerio.load(html || "");
+
+    $("a[href]").each((_, el) => {
+      const href = ($(el).attr("href") || "").trim();
+      const title = normalizeText($(el).text() || "").slice(0, 180);
+      const abs = toAbsoluteUrlMaybe(href, indexUrl);
+      if (!abs) return;
+      const normalized = normalizeUrlForQueue(abs);
+      if (!isAllowedGovHost(normalized)) return;
+      if (!isElectricityRegulationLike({ title, url: normalized })) return;
+      if (!outMap.has(normalized)) {
+        outMap.set(normalized, {
+          title: title || buildFallbackTitle(normalized),
+          url: normalized,
+          publisher: inferPublisherByUrl(normalized),
+          doc_type: inferDocTypeByUrl(normalized),
+        });
+      }
+    });
+
+    for (const href of fileLinks || []) {
+      const abs = toAbsoluteUrlMaybe(href, indexUrl);
+      if (!abs) continue;
+      const normalized = normalizeUrlForQueue(abs);
+      if (!isAllowedGovHost(normalized)) continue;
+      if (!isElectricityRegulationLike({ title: "", url: normalized })) continue;
+      if (!outMap.has(normalized)) {
+        outMap.set(normalized, {
+          title: buildFallbackTitle(normalized),
+          url: normalized,
+          publisher: inferPublisherByUrl(normalized),
+          doc_type: inferDocTypeByUrl(normalized),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(`[index] discovery failed for ${indexUrl}: ${err.message || err}`);
+  }
+  return Array.from(outMap.values());
 }
 
 async function extractTextFromPdfUrl(url) {
@@ -648,9 +778,39 @@ async function updateSourceChecksum(sourceId, checksum) {
 async function ingestOne(src) {
   const { title, url, publisher, doc_type } = src;
   console.log(`\n=== Ingest: ${title}\n${url}`);
+  const normalizedUrl = normalizeUrlForQueue(url);
+  if (INGEST_VISITED_URLS.has(normalizedUrl)) {
+    console.log("Already visited URL in this run. Skipping.");
+    return;
+  }
+  INGEST_VISITED_URLS.add(normalizedUrl);
 
   try {
     const sourceRow = await upsertSource({ title, url, publisher, doc_type });
+
+    if (/index|landing/i.test(String(doc_type || ""))) {
+      const discovered = await discoverGovernmentSourcesFromIndexPage(url);
+      const filtered = discovered
+        .filter((d) => d.url !== normalizedUrl)
+        .filter((d) => !/mmok_takanot_maagar_2025/i.test(d.url))
+        .slice(0, 120);
+      console.log(`[index] discovered ${filtered.length} official links from index page.`);
+
+      const { error: delErr } = await supabase
+        .from("chunks")
+        .delete()
+        .eq("source_id", sourceRow.id);
+      if (delErr) throw delErr;
+
+      for (const child of filtered) {
+        await ingestOne(child);
+      }
+
+      // Keep index source without chunks to avoid noisy retrieval on navigation pages.
+      await updateSourceChecksum(sourceRow.id, sha256(`index:${filtered.length}:${new Date().toISOString()}`));
+      console.log("Index source processed (links ingested, chunks skipped).");
+      return;
+    }
 
     const { text, used, pdfUrl } = await getBestTextFromUrl(url);
 
