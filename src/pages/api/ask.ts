@@ -439,7 +439,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   // Rerank: prefer overlap with question + existing rank + context preference
   hits.sort((a, b) => {
-    // First: context preference (residential boost)
+    // PRIORITY 1: Prefer חוק החשמל (Electricity Law) over all other sources
+    const aIsLaw = /חוק[\s-]?החשמל/i.test(a.source_title || "");
+    const bIsLaw = /חוק[\s-]?החשמל/i.test(b.source_title || "");
+    if (aIsLaw && !bIsLaw) return -1; // a comes first
+    if (!aIsLaw && bIsLaw) return 1;  // b comes first
+    
+    // PRIORITY 2: context preference (residential boost)
     if (assumeResidential) {
       const ha = normalizeHebrewText(`${a.source_title} ${a.section} ${a.text}`).toLowerCase();
       const hb = normalizeHebrewText(`${b.source_title} ${b.section} ${b.text}`).toLowerCase();
@@ -448,12 +454,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       if (ba !== bb) return bb - ba; // Prefer residential
     }
 
-    // Second: token overlap with question
+    // PRIORITY 3: token overlap with question
     const oa = tokenOverlapScore(question, a.text || "");
     const ob = tokenOverlapScore(question, b.text || "");
     if (oa !== ob) return ob - oa;
 
-    // Third: original rank
+    // PRIORITY 4: original rank
     return (b.rank || 0) - (a.rank || 0);
   });
 
