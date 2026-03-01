@@ -8,6 +8,27 @@ export function normalizeHebrewText(input: string): string {
   // Normalize whitespace/newlines from PDF extraction noise.
   t = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   t = t.replace(/\n+/g, " ");
+  
+  // First normalize multiple spaces to single space
+  t = t.replace(/\s{2,}/g, " ");
+  
+  // CONSERVATIVE FIX: Only fix obvious broken words (3+ Hebrew letters with single spaces)
+  // This is safer - we only fix clear cases of broken words, not all spaces between Hebrew letters
+  // "ר א שי" -> "ראשי" (3+ letters with spaces = broken word)
+  // But "חוק החשמל" stays as "חוק החשמל" (preserve word boundaries)
+  
+  // Fix sequences of 3+ Hebrew letters separated by single spaces (iteratively)
+  let changed = true;
+  let iterations = 0;
+  while (changed && iterations < 5) {
+    const before = t;
+    // Match 3+ Hebrew letters with spaces between them
+    t = t.replace(/([\u0590-\u05ff])\s+([\u0590-\u05ff])\s+([\u0590-\u05ff])/g, "$1$2$3");
+    changed = (before !== t);
+    iterations++;
+  }
+  
+  // Normalize remaining whitespace
   t = t.replace(/\s+/g, " ").trim();
 
   // Keep punctuation readable.
@@ -40,7 +61,12 @@ export function normalizeHebrewText(input: string): string {
   // OCR junk cleanup.
   t = t.replace(/\*+/g, " ");
   t = t.replace(/[|]{2,}/g, " ");
-  t = t.replace(/[�]/g, " ");
+  t = t.replace(/[]/g, " ");
+  
+  // Fix common OCR errors: "£" -> nothing (often appears in broken PDFs)
+  t = t.replace(/£/g, "");
+  
+  // Final whitespace cleanup
   t = t.replace(/[ \t]{2,}/g, " ").trim();
 
   return t;
